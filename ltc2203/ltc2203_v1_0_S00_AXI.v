@@ -15,7 +15,11 @@
 	)
 	(
 		// Users to add ports here
-
+		input wire [15:0] adc_data,
+		input wire adc_dco,
+		output wire adc_enc,
+		output wire adc_oe,
+		output wire clk_sel,
 		// User ports ends
 		// Do not modify the ports beyond this line
 
@@ -370,7 +374,7 @@
 	begin
 	      // Address decoding for reading registers
 	      case ( axi_araddr[ADDR_LSB+OPT_MEM_ADDR_BITS:ADDR_LSB] )
-	        2'h0   : reg_data_out <= slv_reg0;
+	        2'h0   : reg_data_out <= {16'b0, adc_data_stable};
 	        2'h1   : reg_data_out <= slv_reg1;
 	        2'h2   : reg_data_out <= slv_reg2;
 	        2'h3   : reg_data_out <= slv_reg3;
@@ -398,7 +402,56 @@
 	end    
 
 	// Add user logic here
+	// --- 1. ADC Drive Clock Generation (Programmable) ---
+    // We use slv_reg2 to store the prescaler value (PSC).
+    // Logic: Toggle the clock output every (slv_reg2 + 1) cycles.
+    // Formula: F_out = 100MHz / (2 * (slv_reg2 + 1))
+    
+    reg [31:0] clk_div_counter;
+    reg        adc_clk_reg;
+    
+    always @(posedge S_AXI_ACLK) begin
+        if (S_AXI_ARESETN == 1'b0) begin
+            clk_div_counter <= 0;
+            adc_clk_reg     <= 0;
+        end 
+        else begin
+            // Check if counter has reached the target value in slv_reg2
+            if (clk_div_counter >= slv_reg2) begin
+                clk_div_counter <= 0;       // Reset counter
+                adc_clk_reg     <= ~adc_clk_reg; // Toggle clock (0->1 or 1->0)
+            end 
+            else begin
+                clk_div_counter <= clk_div_counter + 1;
+            end
+        end
+    end
+    
+    // Assign the toggled register to the physical pin
+    assign adc_enc = adc_clk_reg; 
 
+    // --- 2. Control Signal Mapping ---
+    // slv_reg1[0] = Output Enable (adc_oe)
+    // slv_reg1[1] = Clock Select (clk_sel)
+    assign adc_oe  = slv_reg1[0];
+    assign clk_sel = slv_reg1[1];
+
+    // --- 3. Data Capture (ADC Clock Domain) ---
+    // (Keep your existing capture logic here)
+    reg [15:0] adc_captured_raw;
+    always @(posedge adc_dco) begin
+        adc_captured_raw <= adc_data;
+    end
+
+    // --- 4. Clock Domain Crossing (CDC) ---
+    // (Keep your existing sync logic here)
+    reg [15:0] adc_data_sync1;
+    reg [15:0] adc_data_stable;
+    
+    always @(posedge S_AXI_ACLK) begin
+        adc_data_sync1  <= adc_captured_raw;
+        adc_data_stable <= adc_data_sync1;
+    end
 	// User logic ends
 
 	endmodule

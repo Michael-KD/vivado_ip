@@ -15,7 +15,11 @@
 	)
 	(
 		// Users to add ports here
-
+		input wire [15:0] adc_data,    // 16 Data pins from ADC
+		input wire adc_dco,            // Clock FROM ADC (signals new data)
+		output wire adc_enc,           // Clock TO ADC (triggers sampling)
+		output wire adc_oe,            // Output Enable signal
+		output wire clk_sel,          // Clock select for ADC (0 = external, 1 = internal)
 		// User ports ends
 		// Do not modify the ports beyond this line
 
@@ -68,7 +72,13 @@
 		.S_AXI_RDATA(s00_axi_rdata),
 		.S_AXI_RRESP(s00_axi_rresp),
 		.S_AXI_RVALID(s00_axi_rvalid),
-		.S_AXI_RREADY(s00_axi_rready)
+		.S_AXI_RREADY(s00_axi_rready),
+
+		.adc_data(adc_data),
+        .adc_dco(adc_dco),
+        .adc_enc(adc_enc),
+        .adc_oe(adc_oe),
+        .clk_sel(clk_sel)
 	);
 
 	// Add user logic here
