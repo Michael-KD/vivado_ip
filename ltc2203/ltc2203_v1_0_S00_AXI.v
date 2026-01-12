@@ -1,7 +1,7 @@
 
 `timescale 1 ns / 1 ps
 
-	module timer_ip_v1_0_S00_AXI #
+	module ltc2203_v1_0_S00_AXI #
 	(
 		// Users to add parameters here
 
@@ -28,7 +28,7 @@
 		// Write channel Protection type. This signal indicates the
     		// privilege and security level of the transaction, and whether
     		// the transaction is a data access or an instruction access.
-		input wire [2 : 0] S_AXI_AWPROT,  
+		input wire [2 : 0] S_AXI_AWPROT,
 		// Write address valid. This signal indicates that the master signaling
     		// valid write address and control information.
 		input wire  S_AXI_AWVALID,
@@ -265,20 +265,8 @@
 	                    end
 	        endcase
 	      end
-        else
-          begin
-            // No AXI write this cycle -> run timer logic.
-            // Writes have priority because slv_reg_wren prevents this branch.
-            if (slv_reg0[0])
-              slv_reg1 <= slv_reg1 + 1;
-            // keep other regs unchanged
-            slv_reg0 <= slv_reg0;
-            slv_reg2 <= slv_reg2;
-            slv_reg3 <= slv_reg3;
-          end
-      end
-    end    
-
+	  end
+	end    
 
 	// Implement write response logic generation
 	// The write response and response valid signals are asserted by the slave 
@@ -412,6 +400,5 @@
 	// Add user logic here
 
 	// User logic ends
-
 
 	endmodule
