@@ -18,7 +18,7 @@
 		input wire [11:0] dac_data,  	// 12 Data pins from DAC
 		input wire clk_0,            	// Clock input 0
 		input wire clk_1,            	// Clock input 1
-
+		input wire [15:0] data_in,      // 16 bit data input to DAC from external source
 		// User ports ends
 		// Do not modify the ports beyond this line
 

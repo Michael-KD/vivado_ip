@@ -18,6 +18,7 @@
 		input wire [11:0] dac_data,  	// 12 Data pins from DAC
 		input wire clk_0,            	// Clock input 0
 		input wire clk_1,            	// Clock input 1
+		input wire [15:0] data_in,      // 16 bit data input to DAC from external source
 
 		// User ports ends
 		// Do not modify the ports beyond this line
@@ -401,7 +402,10 @@
 	end    
 
 	// Add user logic here
+	reg dac_src; // 0 is from data_in/external, 1 is from linux writes to slv_reg0
 
+	assign dac_data = (dac_src) ? slv_reg0[11:0] : data_in[11:0];
+	assign slv_reg0 = (dac_src) ? slv_reg0 : {20'b0, data_in[11:0]}; // if external source, update slv_reg0 to reflect that
 	// User logic ends
 
 	endmodule
