@@ -1,7 +1,7 @@
 
 `timescale 1 ns / 1 ps
 
-	module ltc2203_v1_0 #
+	module ltc1666_v1_0 #
 	(
 		// Users to add parameters here
 
@@ -15,13 +15,10 @@
 	)
 	(
 		// Users to add ports here
-		input wire [15:0] adc_data,    // 16 Data pins from ADC
-		input wire adc_dco,            // Clock FROM ADC (signals new data)
-		output wire adc_enc,           // Clock TO ADC (triggers sampling)
-		output wire adc_oe,            // Output Enable signal
-		output wire clk_sel,          // Clock select for ADC (0 = external, 1 = internal)
+		input wire [11:0] dac_data,  	// 12 Data pins from DAC
+		input wire clk_0,            	// Clock input 0
+		input wire clk_1,            	// Clock input 1
 
-        output wire [15:0] data_out,
 		// User ports ends
 		// Do not modify the ports beyond this line
 
@@ -50,10 +47,10 @@
 		input wire  s00_axi_rready
 	);
 // Instantiation of Axi Bus Interface S00_AXI
-	ltc2203_v1_0_S00_AXI # ( 
+	ltc1666_v1_0_S00_AXI # ( 
 		.C_S_AXI_DATA_WIDTH(C_S00_AXI_DATA_WIDTH),
 		.C_S_AXI_ADDR_WIDTH(C_S00_AXI_ADDR_WIDTH)
-	) ltc2203_v1_0_S00_AXI_inst (
+	) ltc1666_v1_0_S00_AXI_inst (
 		.S_AXI_ACLK(s00_axi_aclk),
 		.S_AXI_ARESETN(s00_axi_aresetn),
 		.S_AXI_AWADDR(s00_axi_awaddr),
@@ -76,12 +73,9 @@
 		.S_AXI_RVALID(s00_axi_rvalid),
 		.S_AXI_RREADY(s00_axi_rready),
 
-		.adc_data(adc_data),
-        .adc_dco(adc_dco),
-        .adc_enc(adc_enc),
-        .adc_oe(adc_oe),
-        .clk_sel(clk_sel),
-        .data_out(data_out)
+		.dac_data(dac_data),
+		.clk_0(clk_0),
+		.clk_1(clk_1)
 	);
 
 	// Add user logic here
