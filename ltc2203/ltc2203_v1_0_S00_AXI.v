@@ -20,6 +20,7 @@
 		output wire adc_enc,
 		output wire adc_oe,
 		output wire clk_sel,
+        output wire [15:0] data_out,
 		// User ports ends
 		// Do not modify the ports beyond this line
 
@@ -447,6 +448,7 @@
     // (Keep your existing sync logic here)
     reg [15:0] adc_data_sync1;
     reg [15:0] adc_data_stable;
+    assign data_out = adc_data_stable;
     
     always @(posedge S_AXI_ACLK) begin
         adc_data_sync1  <= adc_captured_raw;

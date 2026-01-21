@@ -20,6 +20,8 @@
 		output wire adc_enc,           // Clock TO ADC (triggers sampling)
 		output wire adc_oe,            // Output Enable signal
 		output wire clk_sel,          // Clock select for ADC (0 = external, 1 = internal)
+
+        output wire [15:0] data_out,
 		// User ports ends
 		// Do not modify the ports beyond this line
 
@@ -78,7 +80,8 @@
         .adc_dco(adc_dco),
         .adc_enc(adc_enc),
         .adc_oe(adc_oe),
-        .clk_sel(clk_sel)
+        .clk_sel(clk_sel),
+        .data_out(data_out)
 	);
 
 	// Add user logic here
