@@ -15,10 +15,10 @@
 	)
 	(
 		// Users to add ports here
-		input wire [11:0] dac_data,  	// 12 Data pins from DAC
-		input wire clk_0,            	// Clock input 0
-		input wire clk_1,            	// Clock input 1
-		input wire [15:0] data_in,      // 16 bit data input to DAC from external source
+		output wire [11:0] dac_data,  	// 12 Data pins to DAC
+		output wire clk_0,            	// Clock output 0
+		output wire clk_1,            	// Clock output 1
+		input wire [11:0] data_in,      // 12 bit data input to DAC from external source
 
 		// User ports ends
 		// Do not modify the ports beyond this line
@@ -374,7 +374,7 @@
 	begin
 	      // Address decoding for reading registers
 	      case ( axi_araddr[ADDR_LSB+OPT_MEM_ADDR_BITS:ADDR_LSB] )
-	        2'h0   : reg_data_out <= slv_reg0;
+			2'h0   : reg_data_out <= (slv_reg1[0]) ? slv_reg0 : {16'b0, data_in};
 	        2'h1   : reg_data_out <= slv_reg1;
 	        2'h2   : reg_data_out <= slv_reg2;
 	        2'h3   : reg_data_out <= slv_reg3;
@@ -402,10 +402,55 @@
 	end    
 
 	// Add user logic here
-	reg dac_src; // 0 is from data_in/external, 1 is from linux writes to slv_reg0
 
-	assign dac_data = (dac_src) ? slv_reg0[11:0] : data_in[11:0];
-	assign slv_reg0 = (dac_src) ? slv_reg0 : {20'b0, data_in[11:0]}; // if external source, update slv_reg0 to reflect that
+    // =========================================================================
+    // 1. DAC Sample Clock Generation
+    // =========================================================================
+    // We use slv_reg2 to store the prescaler value (PSC).
+    // Formula: F_out = 100MHz / (2 * (slv_reg2 + 1))
+    
+    reg [31:0] clk_div_counter;
+    reg        dac_base_clk; // The toggling signal
+    
+    always @(posedge S_AXI_ACLK) begin
+        if (S_AXI_ARESETN == 1'b0) begin
+            clk_div_counter <= 0;
+            dac_base_clk    <= 0;
+        end 
+        else begin
+            // Check if counter has reached the target value in slv_reg2
+            if (clk_div_counter >= slv_reg2) begin
+                clk_div_counter <= 0;
+                dac_base_clk    <= ~dac_base_clk; // Toggle (0->1, 1->0)
+            end 
+            else begin
+                clk_div_counter <= clk_div_counter + 1;
+            end
+        end
+    end
+
+    // =========================================================================
+    // 2. Clock Output & Gating
+    // =========================================================================
+    
+    // slv_reg1[1] = Enable DAC 0 Clock
+    // slv_reg1[2] = Enable DAC 1 Clock
+    
+    assign clk_0 = dac_base_clk & slv_reg1[1];
+    assign clk_1 = dac_base_clk & slv_reg1[2];
+
+    // =========================================================================
+    // 3. Data Source Selection (The Mux)
+    // =========================================================================
+    // slv_reg1[0] == 0: PASSTHROUGH (Hardware Source from ADC/Math)
+    // slv_reg1[0] == 1: MANUAL (Software Source from slv_reg0)
+    
+    wire mode_manual = slv_reg1[0];
+
+    // Mux the data based on mode
+    assign dac_data = (mode_manual) ? slv_reg0[11:0] : data_in[11:0];
+
+
 	// User logic ends
 
 	endmodule
