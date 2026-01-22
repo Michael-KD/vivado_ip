@@ -438,14 +438,12 @@
     assign clk_sel = slv_reg1[1];
 
     // --- 3. Data Capture (ADC Clock Domain) ---
-    // (Keep your existing capture logic here)
     reg [15:0] adc_captured_raw;
     always @(posedge adc_dco) begin
         adc_captured_raw <= adc_data;
     end
 
     // --- 4. Clock Domain Crossing (CDC) ---
-    // (Keep your existing sync logic here)
     reg [15:0] adc_data_sync1;
     reg [15:0] adc_data_stable;
     assign data_out = adc_data_stable;
