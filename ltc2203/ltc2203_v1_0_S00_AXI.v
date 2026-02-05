@@ -428,8 +428,19 @@
         end
     end
     
-    // Assign the toggled register to the physical pin
-    assign adc_enc = adc_clk_reg; 
+    // Output ADC clock using ODDRE1 for clean, low-jitter clock output
+    ODDRE1 #(
+        .IS_C_INVERTED(1'b0),
+        .IS_D1_INVERTED(1'b0),
+        .IS_D2_INVERTED(1'b0),
+        .SRVAL(1'b0)
+    ) oddre1_adc_enc (
+        .Q(adc_enc),
+        .C(S_AXI_ACLK),
+        .D1(adc_clk_reg),
+        .D2(1'b0),
+        .SR(~S_AXI_ARESETN)
+    );
 
     // --- 2. Control Signal Mapping ---
     // slv_reg1[0] = Output Enable (adc_oe)
@@ -438,19 +449,39 @@
     assign clk_sel = slv_reg1[1];
 
     // --- 3. Data Capture (ADC Clock Domain) ---
+    // Capture ADC data and toggle signal on each new sample
     reg [15:0] adc_captured_raw;
+    reg        adc_toggle;  // Toggles each new sample for handshake
+    
     always @(posedge adc_dco) begin
         adc_captured_raw <= adc_data;
+        adc_toggle <= ~adc_toggle;
     end
 
-    // --- 4. Clock Domain Crossing (CDC) ---
-    reg [15:0] adc_data_sync1;
+    // --- 4. Clock Domain Crossing (CDC) with Toggle Handshake ---
+    // 3-stage synchronizer for toggle signal (metastability protection)
+    // Data is captured only when toggle edge is detected (data is stable)
+    reg        toggle_sync1, toggle_sync2, toggle_sync3;
     reg [15:0] adc_data_stable;
     assign data_out = adc_data_stable;
     
     always @(posedge S_AXI_ACLK) begin
-        adc_data_sync1  <= adc_captured_raw;
-        adc_data_stable <= adc_data_sync1;
+        if (S_AXI_ARESETN == 1'b0) begin
+            toggle_sync1 <= 1'b0;
+            toggle_sync2 <= 1'b0;
+            toggle_sync3 <= 1'b0;
+            adc_data_stable <= 16'd0;
+        end else begin
+            // Synchronize toggle signal (3-stage for metastability)
+            toggle_sync1 <= adc_toggle;
+            toggle_sync2 <= toggle_sync1;
+            toggle_sync3 <= toggle_sync2;
+            
+            // Capture data on toggle edge (data is stable by now)
+            if (toggle_sync2 != toggle_sync3) begin
+                adc_data_stable <= adc_captured_raw;
+            end
+        end
     end
 	// User logic ends
 
