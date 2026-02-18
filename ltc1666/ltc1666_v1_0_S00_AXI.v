@@ -430,25 +430,56 @@
     end
 
     // =========================================================================
-    // 2. Clock Output & Gating
+    // 2. Clock Output using ODDRE1 (UltraScale+)
     // =========================================================================
-    
+    // Using ODDRE1 primitives for glitch-free clock output
     // slv_reg1[1] = Enable DAC 0 Clock
     // slv_reg1[2] = Enable DAC 1 Clock
     
-    assign clk_0 = dac_base_clk & slv_reg1[1];
-    assign clk_1 = dac_base_clk & slv_reg1[2];
+    // ODDRE1 for DAC Clock 0
+    ODDRE1 #(
+        .IS_C_INVERTED(1'b0),
+        .IS_D1_INVERTED(1'b0),
+        .IS_D2_INVERTED(1'b0),
+        .SRVAL(1'b0)
+    ) oddre1_clk0 (
+        .Q(clk_0),
+        .C(S_AXI_ACLK),
+        .D1(dac_base_clk & slv_reg1[1]),  // Output on rising edge
+        .D2(1'b0),                         // Output on falling edge
+        .SR(~S_AXI_ARESETN)
+    );
+
+    // ODDRE1 for DAC Clock 1
+    ODDRE1 #(
+        .IS_C_INVERTED(1'b0),
+        .IS_D1_INVERTED(1'b0),
+        .IS_D2_INVERTED(1'b0),
+        .SRVAL(1'b0)
+    ) oddre1_clk1 (
+        .Q(clk_1),
+        .C(S_AXI_ACLK),
+        .D1(dac_base_clk & slv_reg1[2]),  // Output on rising edge
+        .D2(1'b0),                         // Output on falling edge
+        .SR(~S_AXI_ARESETN)
+    );
 
     // =========================================================================
-    // 3. Data Source Selection (The Mux)
+    // 3. Data Source Selection (The Mux) with Clock Domain Sync
     // =========================================================================
     // slv_reg1[0] == 0: PASSTHROUGH (Hardware Source from ADC/Math)
     // slv_reg1[0] == 1: MANUAL (Software Source from slv_reg0)
     
     wire mode_manual = slv_reg1[0];
 
-    // Mux the data based on mode
-    assign dac_data = (mode_manual) ? slv_reg0[11:0] : data_in[11:0];
+    // Synchronize data_in to DAC clock domain to prevent metastability
+    reg [11:0] data_in_sync;
+    always @(posedge dac_base_clk) begin
+        data_in_sync <= data_in;
+    end
+
+    // Mux uses synchronized data for passthrough mode
+    assign dac_data = (mode_manual) ? slv_reg0[11:0] : data_in_sync
 
 
 	// User logic ends
