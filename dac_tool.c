@@ -65,22 +65,81 @@ int main() {
     // Bar Graph
     mvprintw(10, 2, "0 [                                                            ] 4095");
 
-    // Timing Box
-    mvprintw(13, 0, "=== TIMING ===");
-    mvprintw(14, 2, "[P] Prescaler:   [      ]");
-    mvprintw(15, 2, "    Calc Freq:   [          ] MHz");
+    // Ramp Status
+    mvprintw(12, 2, "RAMP MODE:       [     ]  Step: [          ]");
 
-    mvprintw(18, 0, "=== CONTROLS ===");
-    mvprintw(19, 2, "'m'       : Toggle Mode (Manual / Passthrough)");
-    mvprintw(20, 2, "'0' / '1' : Toggle DAC Channels");
-    mvprintw(21, 2, "UP/DOWN   : Adjust Value (+/- 100)");
-    mvprintw(22, 2, "LEFT/RIGHT: Fine Tune (+/- 1)");
-    mvprintw(23, 2, "']' / '[' : Adjust Speed");
-    mvprintw(24, 2, "'q'       : Quit");
+    // Timing Box
+    mvprintw(14, 0, "=== TIMING ===");
+    mvprintw(15, 2, "[P] Prescaler:   [      ]");
+    mvprintw(16, 2, "    Calc Freq:   [          ] MHz");
+
+    mvprintw(19, 0, "=== CONTROLS ===");
+    mvprintw(20, 2, "'m'       : Toggle Mode (Manual / Passthrough)");
+    mvprintw(21, 2, "'0' / '1' : Toggle DAC Channels");
+    mvprintw(22, 2, "UP/DOWN   : Adjust Value (+/- 100)");
+    mvprintw(23, 2, "LEFT/RIGHT: Fine Tune (+/- 1)");
+    mvprintw(24, 2, "']' / '[' : Adjust Speed");
+    mvprintw(25, 2, "'r'       : Toggle Ramp Mode (0->4095 sweep)");
+    mvprintw(26, 2, "'q'       : Quit");
     refresh();
+
+    // --- RAMP STATE ---
+    int ramp_active = 0;
+    uint32_t ramp_val = 0;
+    int ramp_loops = 0;  // completed full sweeps
 
     int running = 1;
     while (running) {
+
+        // --- RAMP MODE ---
+        if (ramp_active) {
+            // Write current ramp value
+            regs[REG_DATA] = ramp_val;
+            usleep(1); // ~1us settle time (kernel may round up to ~5-10us)
+
+            // Advance
+            ramp_val++;
+            if (ramp_val > 4095) {
+                ramp_val = 0;
+                ramp_loops++;
+            }
+
+            // Update display only every 256 steps to keep ramp fast
+            if ((ramp_val & 0xFF) == 0) {
+                mvprintw(12, 20, "ON   ");
+                mvprintw(12, 34, "%04u / %d", ramp_val, ramp_loops);
+                int bars = (ramp_val * 60) / 4095;
+                if (bars > 60) bars = 60;
+                move(10, 5);
+                for(int i=0; i<60; i++) {
+                    if(i < bars) addch('#');
+                    else addch(' ');
+                }
+                mvprintw(7, 20, "%04d", ramp_val);
+                double voltage = ((double)ramp_val / 4095.0) * 10.0;
+                mvprintw(8, 20, "%5.2f V", voltage);
+                refresh();
+            }
+
+            // Non-blocking input check every step so we can quit/stop
+            int ch = getch();
+            if (ch != ERR) {
+                switch(ch) {
+                    case 'q': running = 0; break;
+                    case 'r':
+                        ramp_active = 0;
+                        ramp_val = 0;
+                        mvprintw(12, 20, "OFF  ");
+                        mvprintw(12, 34, "          ");
+                        refresh();
+                        break;
+                }
+            }
+            continue; // skip normal UI path during ramp
+        }
+
+        // --- NORMAL MODE ---
+
         // --- READ HARDWARE ---
         uint32_t raw_r0 = regs[REG_DATA]; // Value
         uint32_t raw_r1 = regs[REG_CTRL]; // Control
@@ -126,9 +185,13 @@ int main() {
             else addch(' ');
         }
 
-        // 4. Timing
-        mvprintw(14, 20, "%-5u", raw_r2);
-        mvprintw(15, 20, "%.2f", freq_mhz);
+        // 4. Ramp status (off in normal mode)
+        mvprintw(12, 20, "OFF  ");
+        mvprintw(12, 34, "          ");
+
+        // 5. Timing
+        mvprintw(15, 20, "%-5u", raw_r2);
+        mvprintw(16, 20, "%.2f", freq_mhz);
 
         refresh();
 
@@ -170,6 +233,13 @@ int main() {
                     break;
                 case '[': // Faster (Decrease divider)
                     if (raw_r2 > 0) regs[REG_PRE] = raw_r2 - 1; 
+                    break;
+
+                // Ramp Mode
+                case 'r':
+                    ramp_active = 1;
+                    ramp_val = 0;
+                    ramp_loops = 0;
                     break;
             }
         }
