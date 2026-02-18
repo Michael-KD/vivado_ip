@@ -446,7 +446,7 @@
         .Q(clk_0),
         .C(S_AXI_ACLK),
         .D1(dac_base_clk & slv_reg1[1]),  // Output on rising edge
-        .D2(1'b0),                         // Output on falling edge
+        .D2(dac_base_clk & slv_reg1[1]),  // Same value for proper clock output
         .SR(~S_AXI_ARESETN)
     );
 
@@ -460,26 +460,19 @@
         .Q(clk_1),
         .C(S_AXI_ACLK),
         .D1(dac_base_clk & slv_reg1[2]),  // Output on rising edge
-        .D2(1'b0),                         // Output on falling edge
+        .D2(dac_base_clk & slv_reg1[2]),  // Same value for proper clock output
         .SR(~S_AXI_ARESETN)
     );
 
     // =========================================================================
-    // 3. Data Source Selection (The Mux) with Clock Domain Sync
+    // 3. Data Source Selection (The Mux)
     // =========================================================================
     // slv_reg1[0] == 0: PASSTHROUGH (Hardware Source from ADC/Math)
     // slv_reg1[0] == 1: MANUAL (Software Source from slv_reg0)
+    // Note: data_in is already in S_AXI_ACLK domain, no CDC needed
     
     wire mode_manual = slv_reg1[0];
-
-    // Synchronize data_in to DAC clock domain to prevent metastability
-    reg [11:0] data_in_sync;
-    always @(posedge dac_base_clk) begin
-        data_in_sync <= data_in;
-    end
-
-    // Mux uses synchronized data for passthrough mode
-    assign dac_data = (mode_manual) ? slv_reg0[11:0] : data_in_sync
+    assign dac_data = (mode_manual) ? slv_reg0[11:0] : data_in;
 
 
 	// User logic ends

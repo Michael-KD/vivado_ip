@@ -10,33 +10,26 @@ set_clock_groups -asynchronous \
     -group [get_clocks adc_dco_clk] \
     -group [get_clocks zynq_ultra_ps_e_0_pl_clk]
 
-# Generated clocks for ODDRE1 outputs
-create_generated_clock -name adc_enc_clk \
-    -source [get_pins -hierarchical -filter {NAME =~ *oddre1_adc_enc/C}] \
-    -divide_by 1 \
-    [get_ports adc_enc]
-
-create_generated_clock -name dac_clk_0 \
-    -source [get_pins -hierarchical -filter {NAME =~ *oddre1_clk0/C}] \
-    -divide_by 1 \
-    [get_ports clk_0]
-
-create_generated_clock -name dac_clk_1 \
-    -source [get_pins -hierarchical -filter {NAME =~ *oddre1_clk1/C}] \
-    -divide_by 1 \
-    [get_ports clk_1]
-
 # =============================================================================
 # False Paths for CDC (Toggle Handshake)
 # =============================================================================
 
-# Toggle signal CDC path
+# Toggle signal CDC path (2-stage sync + edge detect)
 set_false_path -from [get_cells -hierarchical -filter {NAME =~ *adc_toggle_reg*}] \
                -to   [get_cells -hierarchical -filter {NAME =~ *toggle_sync1_reg*}]
 
-# Data capture path (sampled when toggle is stable)
+# Data capture path (sampled when toggle edge detected - data is stable)
 set_false_path -from [get_cells -hierarchical -filter {NAME =~ *adc_captured_raw_reg*}] \
                -to   [get_cells -hierarchical -filter {NAME =~ *adc_data_stable_reg*}]
+
+# =============================================================================
+# Clock Output Constraints (Programmable Dividers)
+# =============================================================================
+# These clocks have runtime-programmable frequency via slv_reg2.
+# Cannot meaningfully constrain timing - mark as false paths.
+set_false_path -to [get_ports adc_enc]
+set_false_path -to [get_ports clk_0]
+set_false_path -to [get_ports clk_1]
 
 # =============================================================================
 # DAC Pin Assignments & Constraints
@@ -67,11 +60,9 @@ set_property DRIVE 12 [get_ports {clk_1}]
 set_property SLEW FAST [get_ports {clk_0}]
 set_property SLEW FAST [get_ports {clk_1}]
 
-# DAC clock output delay (ensures ODDRE1 in IOB)
-set_output_delay -clock [get_clocks zynq_ultra_ps_e_0_pl_clk] -min 0.5 [get_ports clk_0]
-set_output_delay -clock [get_clocks zynq_ultra_ps_e_0_pl_clk] -max 1.5 [get_ports clk_0]
-set_output_delay -clock [get_clocks zynq_ultra_ps_e_0_pl_clk] -min 0.5 [get_ports clk_1]
-set_output_delay -clock [get_clocks zynq_ultra_ps_e_0_pl_clk] -max 1.5 [get_ports clk_1]
+# Force ODDRE1 into IOB for consistent timing
+set_property IOB TRUE [get_ports {clk_0}]
+set_property IOB TRUE [get_ports {clk_1}]
 
 # =============================================================================
 # ADC Pin Assignments & Constraints
@@ -118,6 +109,5 @@ set_property IOSTANDARD LVCMOS33 [get_ports {adc_dco}]
 set_property DRIVE 12 [get_ports {adc_enc}]
 set_property SLEW FAST [get_ports {adc_enc}]
 
-# ADC encode clock output delay (ensures ODDRE1 in IOB)
-set_output_delay -clock [get_clocks zynq_ultra_ps_e_0_pl_clk] -min 0.5 [get_ports adc_enc]
-set_output_delay -clock [get_clocks zynq_ultra_ps_e_0_pl_clk] -max 1.5 [get_ports adc_enc]
+# Force ODDRE1 into IOB for consistent timing
+set_property IOB TRUE [get_ports {adc_enc}]

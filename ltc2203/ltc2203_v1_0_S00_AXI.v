@@ -438,7 +438,7 @@
         .Q(adc_enc),
         .C(S_AXI_ACLK),
         .D1(adc_clk_reg),
-        .D2(1'b0),
+        .D2(adc_clk_reg),
         .SR(~S_AXI_ARESETN)
     );
 
@@ -459,7 +459,7 @@
     end
 
     // --- 4. Clock Domain Crossing (CDC) with Toggle Handshake ---
-    // 3-stage synchronizer for toggle signal (metastability protection)
+	// 2-stage synchronizer for metastability + 1 stage for edge detection
     // Data is captured only when toggle edge is detected (data is stable)
     reg        toggle_sync1, toggle_sync2, toggle_sync3;
     reg [15:0] adc_data_stable;
