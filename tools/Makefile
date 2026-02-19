@@ -2,7 +2,7 @@ CC = gcc
 CFLAGS = -Wall
 LDFLAGS = -lncurses
 
-all: adc_tool dac_tool
+all: adc_tool dac_tool spgd_tool
 
 adc_tool: adc_tool.c
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
@@ -10,5 +10,8 @@ adc_tool: adc_tool.c
 dac_tool: dac_tool.c
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
+spgd_tool: spgd_tool.c
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+
 clean:
-	rm -f adc_tool dac_tool
+	rm -f adc_tool dac_tool spgd_tool

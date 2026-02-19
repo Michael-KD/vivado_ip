@@ -6,9 +6,10 @@
 create_clock -period 40.000 -name adc_dco_clk [get_ports adc_dco]
 
 # Mark ADC DCO as asynchronous to Zynq PL clock
+# Use *pl_clk* wildcard to match typical Zynq PL clock names (e.g., clk_pl_0, zynq_ultra_ps_e_0_pl_clk0)
 set_clock_groups -asynchronous \
     -group [get_clocks adc_dco_clk] \
-    -group [get_clocks zynq_ultra_ps_e_0_pl_clk]
+    -group [get_clocks -include_generated_clocks -of_objects [get_pins -hierarchical -filter {NAME =~ *zynq_ultra_ps_e_0/pl_clk0}]]
 
 # =============================================================================
 # False Paths for CDC (Toggle Handshake)
@@ -61,8 +62,9 @@ set_property SLEW FAST [get_ports {clk_0}]
 set_property SLEW FAST [get_ports {clk_1}]
 
 # Force ODDRE1 into IOB for consistent timing
-set_property IOB TRUE [get_ports {clk_0}]
-set_property IOB TRUE [get_ports {clk_1}]
+# Commented out to resolve [Place 30-722] error: driving logic is not packable into IOB
+# set_property IOB TRUE [get_ports {clk_0}]
+# set_property IOB TRUE [get_ports {clk_1}]
 
 # =============================================================================
 # ADC Pin Assignments & Constraints
@@ -110,4 +112,5 @@ set_property DRIVE 12 [get_ports {adc_enc}]
 set_property SLEW FAST [get_ports {adc_enc}]
 
 # Force ODDRE1 into IOB for consistent timing
-set_property IOB TRUE [get_ports {adc_enc}]
+# Commented out to resolve [Place 30-722] error: driving logic is not packable into IOB
+# set_property IOB TRUE [get_ports {adc_enc}]
