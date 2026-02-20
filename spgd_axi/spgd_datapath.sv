@@ -76,15 +76,37 @@ module spgd_datapath #(
             // 2. Output Multiplexer (to physical DAC)
             // If FSM says PLUS: output = u + delta_u
             // If FSM says MINUS: output = u - delta_u
+            // Use signed arithmetic with extra bit to detect overflow/underflow
+            logic signed [DAC_WIDTH+1:0] u_plus_full, u_minus_full;
+            assign u_plus_full  = $signed({2'b0, u_reg[i]}) + $signed(delta_u);
+            assign u_minus_full = $signed({2'b0, u_reg[i]}) - $signed(delta_u);
+
+            // Saturate to valid DAC range [0, 2^DAC_WIDTH - 1]
             logic [DAC_WIDTH-1:0] u_plus, u_minus;
-            assign u_plus  = u_reg[i] + delta_u;
-            assign u_minus = u_reg[i] - delta_u;
+            always_comb begin
+                // Saturate u_plus
+                if (u_plus_full < 0)
+                    u_plus = '0;
+                else if (u_plus_full > {{2{1'b0}}, {DAC_WIDTH{1'b1}}})
+                    u_plus = '1;
+                else
+                    u_plus = u_plus_full[DAC_WIDTH-1:0];
+
+                // Saturate u_minus
+                if (u_minus_full < 0)
+                    u_minus = '0;
+                else if (u_minus_full > {{2{1'b0}}, {DAC_WIDTH{1'b1}}})
+                    u_minus = '1;
+                else
+                    u_minus = u_minus_full[DAC_WIDTH-1:0];
+            end
             
             assign dac_data_out[i] = select_plus_minus ? u_plus : u_minus;
 
             // 3. DSP Update Calculation
+            // Extract bits [31:16] - divides by 65536 instead of 4 billion
             logic signed [DAC_WIDTH-1:0] scaled_update;
-            assign scaled_update = global_step_size[47:32]; 
+            assign scaled_update = global_step_size[31:16]; 
 
             // Calculate with 1 extra bit (DAC_WIDTH + 1) to catch overflow/underflow
             logic signed [DAC_WIDTH:0] temp_next_u;
