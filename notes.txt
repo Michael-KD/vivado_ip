@@ -1,0 +1,48 @@
+micro project-spec/meta-user/recipes-bsp/device-tree/files/system-user.dtsi
+
+/include/ "system-conf.dtsi"
+
+/ {
+    chosen {
+        bootargs = "earlycon console=ttyPS0,115200 clk_ignore_unused root=/dev/mmcblk1p2 rw rootwait cma=512M uio_pdrv_genirq.of_id=generic-uio,ui_pdrv";
+    };
+};
+
+/* SD */
+&sdhci1 {
+    disable-wp;
+    no-1-8-v;
+};
+
+/* USB */
+&dwc3_0 {
+    status = "okay";
+    dr_mode = "host";
+};
+
+/* Use the existing timer node created by the hardware platform */
+&timer_ip_0 {
+    compatible = "generic-uio,ui_pdrv";
+};
+
+- axi gpio or emio gpio works
+- got static mac, need static ip
+- gpiod working, have new test script
+- start testing adc
+- setup a dma test
+
+# SD CARD
+petalinux-config --get-hw-description ../../hardware/pacs-vivado/ ***.xsa
+petalinux-build
+petalinux-package --boot --fsbl images/linux/zynqmp_fsbl.elf --fpga images/linux/system.bit --u-boot images/linux/u-boot.elf --pmufw images/linux/pmufw.elf --atf images/linux/bl31.elf --force
+petalinux-package --wic
+sudo cp images/linux/petalinux-sdimage.wic /vm-shared/
+
+# JTAG
+petalinux-boot --jtag --hw_server-url 192.168.56.1:3121 --u-boot --fpga --kernel
+
+# QEMU
+petalinux-boot --qemu --kernel
+
+setenv bootargs "earlycon console=ttyPS0,921600 root=/dev/mmcblk0p2 rw rootwait cma=256M uio_pdrv_genirq.of_id=generic-uio"
+boot
