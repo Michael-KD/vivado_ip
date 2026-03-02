@@ -45,16 +45,18 @@ int main() {
     attroff(A_BOLD);
 
     mvprintw(2, 2,  "STATUS:         [   ]");
-    mvprintw(4, 2,  "SETTLE CYCLES:  [      ]"); 
-    mvprintw(5, 2,  "PERTURB AMP:    [      ]");
-    mvprintw(6, 2,  "GAMMA (LR):     [          ]");
+    mvprintw(3, 2,  "PASSTHROUGH:    [   ]");
+    mvprintw(5, 2,  "SETTLE CYCLES:  [      ]"); 
+    mvprintw(6, 2,  "PERTURB AMP:    [      ]");
+    mvprintw(7, 2,  "GAMMA (LR):     [          ]");
 
-    mvprintw(9, 0, "=== CONTROLS ===");
-    mvprintw(10, 2, "'e'       : Toggle Enable Loop");
-    mvprintw(11, 2, "'s' / 'S' : -/+ Settle Cycles (10)");
-    mvprintw(12, 2, "'p' / 'P' : -/+ Perturb Amp   (100)");
-    mvprintw(13, 2, "'g' / 'G' : -/+ Gamma LR      (100)");
-    mvprintw(14, 2, "'q'       : Quit");
+    mvprintw(10, 0, "=== CONTROLS ===");
+    mvprintw(11, 2, "'e'       : Toggle Enable Loop");
+    mvprintw(12, 2, "'t'       : Toggle Passthrough Mode");
+    mvprintw(13, 2, "'s' / 'S' : -/+ Settle Cycles (10)");
+    mvprintw(14, 2, "'p' / 'P' : -/+ Perturb Amp   (100)");
+    mvprintw(15, 2, "'g' / 'G' : -/+ Gamma LR      (100)");
+    mvprintw(16, 2, "'q'       : Quit");
     refresh();
 
     int running = 1;
@@ -66,6 +68,7 @@ int main() {
 
         // --- PARSE FIELDS ---
         int enabled       = raw_ctrl & 0x1;
+        int passthrough   = (raw_ctrl >> 1) & 0x1;
         int settle_cycles = raw_config & 0xFFFF;
         int perturb_amp   = (raw_config >> 16) & 0xFFFF;
         int gamma_lr      = raw_gamma; // Assuming integer representation or fixed point
@@ -81,10 +84,19 @@ int main() {
             mvprintw(2, 19, "OFF");
         }
 
-        // 2. Parameters
-        mvprintw(4, 19, "%-6d", settle_cycles);
-        mvprintw(5, 19, "%-6d", perturb_amp);
-        mvprintw(6, 19, "%-10d", gamma_lr);
+        // 2. Passthrough Mode
+        if (passthrough) {
+            attron(A_REVERSE | A_BOLD);
+            mvprintw(3, 19, "ON ");
+            attroff(A_REVERSE | A_BOLD);
+        } else {
+            mvprintw(3, 19, "OFF");
+        }
+
+        // 3. Parameters
+        mvprintw(5, 19, "%-6d", settle_cycles);
+        mvprintw(6, 19, "%-6d", perturb_amp);
+        mvprintw(7, 19, "%-10d", gamma_lr);
 
         refresh();
 
@@ -97,6 +109,11 @@ int main() {
                 // Toggle Enable
                 case 'e': 
                     regs[REG_CTRL] = raw_ctrl ^ 0x01; 
+                    break;
+
+                // Toggle Passthrough Mode
+                case 't': 
+                    regs[REG_CTRL] = raw_ctrl ^ 0x02; 
                     break;
 
                 // Settle Cycles (Lower 16 of REG_CONFIG)

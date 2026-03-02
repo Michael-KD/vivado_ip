@@ -40,9 +40,9 @@ module spgd_datapath #(
             j_plus_reg  <= '0;
             j_minus_reg <= '0;
         end else begin
-            // Zero-extend the unsigned ADC data to signed
-            if (latch_j_plus)  j_plus_reg  <= {1'b0, adc_data_in};
-            if (latch_j_minus) j_minus_reg <= {1'b0, adc_data_in};
+            // Sign-extend the 2's complement ADC data
+            if (latch_j_plus)  j_plus_reg  <= {adc_data_in[ADC_WIDTH-1], adc_data_in};
+            if (latch_j_minus) j_minus_reg <= {adc_data_in[ADC_WIDTH-1], adc_data_in};
         end
     end
 
@@ -130,7 +130,7 @@ module spgd_datapath #(
             // 4. Commit the new baseline phase to the register
             always_ff @(posedge clk or negedge rst_n) begin
                 if (!rst_n) begin
-                    u_reg[i] <= '0; // Start at 0V
+                    u_reg[i] <= {1'b1, {(DAC_WIDTH-1){1'b0}}}; // Start at mid-scale (2V for DAC)
                 end else if (commit_new_u) begin
                     u_reg[i] <= next_u;
                 end

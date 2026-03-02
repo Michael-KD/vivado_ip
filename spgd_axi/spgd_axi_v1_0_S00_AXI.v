@@ -404,10 +404,40 @@
 	
 	// Register mapping:
 	// slv_reg0[0]       : enable_loop
+	// slv_reg0[1]       : passthrough_mode (bypasses SPGD, uses math_accelerator)
 	// slv_reg1[15:0]    : settle_cycles
 	// slv_reg1[31:16]   : perturb_amp
 	// slv_reg2[31:0]    : gamma_lr
 	
+	// Control signals
+	wire passthrough_mode = slv_reg0[1];
+	
+	// Internal wires for SPGD output
+	wire [(NUM_CHANNELS*DAC_WIDTH)-1:0] spgd_dac_out;
+	
+	// Math accelerator output (12-bit)
+	wire [11:0] math_accel_out;
+	
+	// Passthrough output: zero-extend 12-bit to 16-bit, replicate to all channels
+	wire [(NUM_CHANNELS*DAC_WIDTH)-1:0] passthrough_dac_out;
+	genvar ch;
+	generate
+		for (ch = 0; ch < NUM_CHANNELS; ch = ch + 1) begin : gen_passthrough
+			assign passthrough_dac_out[(ch*DAC_WIDTH) +: DAC_WIDTH] = {4'b0000, math_accel_out};
+		end
+	endgenerate
+	
+	// Output mux: select between SPGD and passthrough
+	assign dac_data_out = passthrough_mode ? passthrough_dac_out : spgd_dac_out;
+	
+	// Math Accelerator for passthrough mode
+	math_accelerator u_math_accel (
+		.clk(S_AXI_ACLK),
+		.data_in(adc_data_in),
+		.data_out(math_accel_out)
+	);
+	
+	// SPGD Top Level Module
 	spgd_top #(
 		.NUM_CHANNELS(NUM_CHANNELS),
 		.ADC_WIDTH(ADC_WIDTH),
@@ -424,9 +454,8 @@
 		
 		// Hardware interfaces
 		.adc_data_in(adc_data_in),
-		.dac_data_flat_out(dac_data_out)
+		.dac_data_flat_out(spgd_dac_out)
 	);
-	    // Instantiate SPGD Top Level Module
 
 	// User logic ends
 

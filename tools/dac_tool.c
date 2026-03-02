@@ -60,10 +60,10 @@ int main() {
     // Output Box
     mvprintw(6, 0,  "=== OUTPUT DATA ===");
     mvprintw(7, 2,  "MANUAL VALUE:    [      ] (0-4095)");
-    mvprintw(8, 2,  "EST. VOLTAGE:    [      ] (0-10V Scale)");
+    mvprintw(8, 2,  "EST. VOLTAGE:    [      ] (0-4V Scale)");
     
     // Bar Graph
-    mvprintw(10, 2, "0 [                                                            ] 4095");
+    mvprintw(10, 2, "0V [                                                           ] +4V");
 
     // Ramp Status
     mvprintw(12, 2, "RAMP MODE:       [     ]  Step: [          ]");
@@ -116,7 +116,7 @@ int main() {
                     else addch(' ');
                 }
                 mvprintw(7, 20, "%04d", ramp_val);
-                double voltage = ((double)ramp_val / 4095.0) * 10.0;
+                double voltage = ((double)ramp_val / 4095.0) * 4.0;
                 mvprintw(8, 20, "%5.2f V", voltage);
                 refresh();
             }
@@ -170,8 +170,8 @@ int main() {
         // 2. Data Values
         mvprintw(7, 20, "%04d", dac_val);
         
-        // Voltage Estimation (Assuming 0-4095 maps to 0-10V for display purposes)
-        double voltage = ((double)dac_val / 4095.0) * 10.0;
+        // Voltage Estimation (Unipolar: 0=0V, 4095=+4V)
+        double voltage = ((double)dac_val / 4095.0) * 4.0;
         mvprintw(8, 20, "%5.2f V", voltage);
 
         // 3. Bar Graph

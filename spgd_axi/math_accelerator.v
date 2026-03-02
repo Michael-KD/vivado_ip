@@ -3,14 +3,14 @@
 module math_accelerator(
     input wire clk,                  // System Clock (100 MHz)
     input wire signed [15:0] data_in,// From ADC (Signed 2's Comp, ±10V)
-    output reg [11:0] data_out       // To DAC (12-bit Unsigned, 0-10V)
+    output reg [11:0] data_out       // To DAC (12-bit Unsigned, 0-4V)
     );
 
     // ==========================================================================
     // Simple Passthrough: 16-bit Signed to 12-bit Unsigned Conversion
     // ==========================================================================
     // ADC: 16-bit signed (-32768 to +32767) representing ±10V
-    // DAC: 12-bit unsigned (0 to 4095) representing 0-10V
+    // DAC: 12-bit unsigned (0 to 4095) representing 0-4V
     //
     // Conversion: Add 32768 to shift signed range to unsigned, take upper 12 bits
     // ==========================================================================
