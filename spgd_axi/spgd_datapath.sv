@@ -111,9 +111,9 @@ module spgd_datapath #(
             // Calculate with 1 extra bit (DAC_WIDTH + 1) to catch overflow/underflow
             logic signed [DAC_WIDTH:0] temp_next_u;
             assign temp_next_u = random_flips[i] ? 
-                                 ({1'b0, u_reg[i]} + scaled_update) : 
-                                 ({1'b0, u_reg[i]} - scaled_update);
-
+                                ($signed({1'b0, u_reg[i]}) + $signed(scaled_update)) : 
+                                ($signed({1'b0, u_reg[i]}) - $signed(scaled_update));
+                                
             logic [DAC_WIDTH-1:0] next_u;
             always_comb begin
                 // Underflow clamp (less than 0)
