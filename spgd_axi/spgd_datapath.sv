@@ -109,18 +109,18 @@ module spgd_datapath #(
             assign scaled_update = global_step_size[31:16]; 
 
             // Calculate with 1 extra bit (DAC_WIDTH + 1) to catch overflow/underflow
-            logic signed [DAC_WIDTH:0] temp_next_u;
+            logic signed [DAC_WIDTH+1:0] temp_next_u;
             assign temp_next_u = random_flips[i] ? 
-                                ($signed({1'b0, u_reg[i]}) + $signed(scaled_update)) : 
-                                ($signed({1'b0, u_reg[i]}) - $signed(scaled_update));
-                                
+                                ($signed({2'b00, u_reg[i]}) + $signed(scaled_update)) : 
+                                ($signed({2'b00, u_reg[i]}) - $signed(scaled_update));
+
             logic [DAC_WIDTH-1:0] next_u;
             always_comb begin
                 // Underflow clamp (less than 0)
                 if (temp_next_u < 0) begin
                     next_u = '0; 
                 // Overflow clamp (greater than max DAC value, e.g., 0xFFFF)
-                end else if (temp_next_u > {1'b0, {DAC_WIDTH{1'b1}}}) begin
+                end else if (temp_next_u > {2'b00, {DAC_WIDTH{1'b1}}}) begin
                     next_u = '1; // Sets all bits to 1
                 // Safe range
                 end else begin
