@@ -405,12 +405,14 @@
 	// Register mapping:
 	// slv_reg0[0]       : enable_loop
 	// slv_reg0[1]       : passthrough_mode (bypasses SPGD, uses math_accelerator)
+	// slv_reg0[2]       : soft_reset (resets DAC channels to mid-scale)
 	// slv_reg1[15:0]    : settle_cycles
 	// slv_reg1[31:16]   : perturb_amp
 	// slv_reg2[31:0]    : gamma_lr
 	
 	// Control signals
 	wire passthrough_mode = slv_reg0[1];
+	wire soft_reset       = slv_reg0[2];
 	
 	// Internal wires for SPGD output
 	wire [(NUM_CHANNELS*DAC_WIDTH)-1:0] spgd_dac_out;
@@ -448,6 +450,7 @@
 		
 		// Control signals from AXI registers
 		.enable_loop(slv_reg0[0]),
+		.soft_reset(soft_reset),
 		.settle_cycles(slv_reg1[15:0]),
 		.perturb_amp(slv_reg1[31:16]),
 		.gamma_lr(slv_reg2),

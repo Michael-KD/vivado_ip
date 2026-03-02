@@ -46,20 +46,28 @@ int main() {
 
     mvprintw(2, 2,  "STATUS:         [   ]");
     mvprintw(3, 2,  "PASSTHROUGH:    [   ]");
-    mvprintw(5, 2,  "SETTLE CYCLES:  [      ]"); 
-    mvprintw(6, 2,  "PERTURB AMP:    [      ]");
-    mvprintw(7, 2,  "GAMMA (LR):     [          ]");
+    mvprintw(4, 2,  "AUTO-RESET:     [   ]");
+    mvprintw(6, 2,  "SETTLE CYCLES:  [      ]"); 
+    mvprintw(7, 2,  "PERTURB AMP:    [      ]");
+    mvprintw(8, 2,  "GAMMA (LR):     [          ]");
+    mvprintw(9, 2,  "RESET PERIOD:   [      ] ms");
 
-    mvprintw(10, 0, "=== CONTROLS ===");
-    mvprintw(11, 2, "'e'       : Toggle Enable Loop");
-    mvprintw(12, 2, "'t'       : Toggle Passthrough Mode");
-    mvprintw(13, 2, "'s' / 'S' : -/+ Settle Cycles (10)");
-    mvprintw(14, 2, "'p' / 'P' : -/+ Perturb Amp   (100)");
-    mvprintw(15, 2, "'g' / 'G' : -/+ Gamma LR      (100)");
-    mvprintw(16, 2, "'q'       : Quit");
+    mvprintw(12, 0, "=== CONTROLS ===");
+    mvprintw(13, 2, "'e'       : Toggle Enable Loop");
+    mvprintw(14, 2, "'t'       : Toggle Passthrough Mode");
+    mvprintw(15, 2, "'r'       : One-shot DAC Reset (mid-scale)");
+    mvprintw(16, 2, "'R'       : Toggle Auto-Reset Mode");
+    mvprintw(17, 2, "'s' / 'S' : -/+ Settle Cycles (10)");
+    mvprintw(18, 2, "'p' / 'P' : -/+ Perturb Amp   (100)");
+    mvprintw(19, 2, "'g' / 'G' : -/+ Gamma LR      (100)");
+    mvprintw(20, 2, "'d' / 'D' : -/+ Reset Period   (50 ms)");
+    mvprintw(21, 2, "'q'       : Quit");
     refresh();
 
     int running = 1;
+    int auto_reset = 0;         // Auto-reset mode off by default
+    int reset_period_ms = 500;  // Default auto-reset period (ms)
+    int loop_elapsed_ms = 0;    // Tracks time since last reset
     while (running) {
         // --- READ HARDWARE ---
         uint32_t raw_ctrl   = regs[REG_CTRL];
@@ -93,10 +101,20 @@ int main() {
             mvprintw(3, 19, "OFF");
         }
 
-        // 3. Parameters
-        mvprintw(5, 19, "%-6d", settle_cycles);
-        mvprintw(6, 19, "%-6d", perturb_amp);
-        mvprintw(7, 19, "%-10d", gamma_lr);
+        // 3. Auto-Reset Mode
+        if (auto_reset) {
+            attron(A_REVERSE | A_BOLD);
+            mvprintw(4, 19, "ON ");
+            attroff(A_REVERSE | A_BOLD);
+        } else {
+            mvprintw(4, 19, "OFF");
+        }
+
+        // 4. Parameters
+        mvprintw(6, 19, "%-6d", settle_cycles);
+        mvprintw(7, 19, "%-6d", perturb_amp);
+        mvprintw(8, 19, "%-10d", gamma_lr);
+        mvprintw(9, 19, "%-6d", reset_period_ms);
 
         refresh();
 
@@ -148,8 +166,42 @@ int main() {
                 case 'G': // Increase
                     regs[REG_GAMMA] = gamma_lr + 100;
                     break;
+
+                // One-shot DAC soft reset (pulse bit 2)
+                case 'r': {
+                    regs[REG_CTRL] = raw_ctrl | 0x04;  // Set bit 2
+                    usleep(1000);                       // Hold ~1us
+                    regs[REG_CTRL] = raw_ctrl & ~0x04;  // Clear bit 2
+                    break;
+                }
+
+                // Toggle auto-reset mode
+                case 'R':
+                    auto_reset = !auto_reset;
+                    loop_elapsed_ms = 0;
+                    break;
+
+                // Adjust reset period
+                case 'd': // Decrease
+                    if (reset_period_ms > 50) reset_period_ms -= 50;
+                    break;
+                case 'D': // Increase
+                    reset_period_ms += 50;
+                    break;
             }
         }
+        // --- AUTO-RESET LOGIC ---
+        if (auto_reset) {
+            loop_elapsed_ms += 50; // Each loop iteration is ~50ms
+            if (loop_elapsed_ms >= reset_period_ms) {
+                uint32_t cur_ctrl = regs[REG_CTRL];
+                regs[REG_CTRL] = cur_ctrl | 0x04;   // Assert soft_reset (bit 2)
+                usleep(1000);                        // Brief pulse
+                regs[REG_CTRL] = cur_ctrl & ~0x04;   // Deassert soft_reset
+                loop_elapsed_ms = 0;
+            }
+        }
+
         usleep(50000); // 20 FPS
     }
 

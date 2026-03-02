@@ -11,6 +11,7 @@ module spgd_top #(
 
     // Inputs from the processor
     input  logic        enable_loop,
+    input  logic        soft_reset,
     input  logic [15:0] settle_cycles,
     input  logic [15:0] perturb_amp,
     input  logic [31:0] gamma_lr,
@@ -76,6 +77,7 @@ module spgd_top #(
     ) u_datapath (
         .clk                (clk),
         .rst_n              (rst_n),
+        .soft_reset         (soft_reset),
         .select_plus_minus  (select_plus_minus),
         .latch_j_plus       (latch_j_plus),
         .latch_j_minus      (latch_j_minus),

@@ -8,6 +8,9 @@ module spgd_datapath #(
     input  logic clk,
     input  logic rst_n,
 
+    // Soft reset (from processor) - resets u_reg to mid-scale
+    input  logic soft_reset,
+
     // Control Signals (From FSM)
     input  logic select_plus_minus,
     input  logic latch_j_plus,
@@ -131,6 +134,8 @@ module spgd_datapath #(
             always_ff @(posedge clk or negedge rst_n) begin
                 if (!rst_n) begin
                     u_reg[i] <= {1'b1, {(DAC_WIDTH-1){1'b0}}}; // Start at mid-scale (2V for DAC)
+                end else if (soft_reset) begin
+                    u_reg[i] <= {1'b1, {(DAC_WIDTH-1){1'b0}}}; // Reset to mid-scale
                 end else if (commit_new_u) begin
                     u_reg[i] <= next_u;
                 end
