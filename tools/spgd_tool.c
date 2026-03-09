@@ -58,15 +58,15 @@ int main() {
     mvprintw(15, 2, "'r'       : One-shot DAC Reset (mid-scale)");
     mvprintw(16, 2, "'R'       : Toggle Auto-Reset Mode");
     mvprintw(17, 2, "'s' / 'S' : -/+ Settle Cycles (10)");
-    mvprintw(18, 2, "'p' / 'P' : -/+ Perturb Amp   (100)");
+    mvprintw(18, 2, "'p' / 'P' : -/+ Perturb Amp   (10)");
     mvprintw(19, 2, "'g' / 'G' : -/+ Gamma LR      (100)");
-    mvprintw(20, 2, "'d' / 'D' : -/+ Reset Period   (50 ms)");
+    mvprintw(20, 2, "'d' / 'D' : -/+ Reset Period   (1 ms)");
     mvprintw(21, 2, "'q'       : Quit");
     refresh();
 
     int running = 1;
     int auto_reset = 0;         // Auto-reset mode off by default
-    int reset_period_ms = 500;  // Default auto-reset period (ms)
+    int reset_period_ms = 10;   // Default auto-reset period (ms)
     int loop_elapsed_ms = 0;    // Tracks time since last reset
     while (running) {
         // --- READ HARDWARE ---
@@ -148,12 +148,12 @@ int main() {
 
                 // Perturbation Amplitude (Upper 16 of REG_CONFIG)
                 case 'p': { // Decrease
-                    int new_val = (perturb_amp >= 100) ? perturb_amp - 100 : 0;
+                    int new_val = (perturb_amp >= 10) ? perturb_amp - 10 : 0;
                     regs[REG_CONFIG] = (new_val << 16) | settle_cycles;
                     break;
                 }
                 case 'P': { // Increase
-                    int new_val = (perturb_amp <= 0xFF00) ? perturb_amp + 100 : 0xFFFF;
+                    int new_val = (perturb_amp <= 0xFFF5) ? perturb_amp + 10 : 0xFFFF;
                     regs[REG_CONFIG] = (new_val << 16) | settle_cycles;
                     break;
                 }
@@ -183,26 +183,26 @@ int main() {
 
                 // Adjust reset period
                 case 'd': // Decrease
-                    if (reset_period_ms > 50) reset_period_ms -= 50;
+                    if (reset_period_ms > 1) reset_period_ms -= 1;
                     break;
                 case 'D': // Increase
-                    reset_period_ms += 50;
+                    reset_period_ms += 1;
                     break;
             }
         }
         // --- AUTO-RESET LOGIC ---
         if (auto_reset) {
-            loop_elapsed_ms += 50; // Each loop iteration is ~50ms
+            loop_elapsed_ms += 1; // Each loop iteration is ~1ms
             if (loop_elapsed_ms >= reset_period_ms) {
                 uint32_t cur_ctrl = regs[REG_CTRL];
                 regs[REG_CTRL] = cur_ctrl | 0x04;   // Assert soft_reset (bit 2)
-                usleep(1000);                        // Brief pulse
+                usleep(100);                         // Brief pulse
                 regs[REG_CTRL] = cur_ctrl & ~0x04;   // Deassert soft_reset
                 loop_elapsed_ms = 0;
             }
         }
 
-        usleep(50000); // 20 FPS
+        usleep(1000); // 1ms loop for accurate timing
     }
 
     endwin();
