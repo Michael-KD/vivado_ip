@@ -1,3 +1,5 @@
+nano project-spec/meta-user/conf/petalinuxbsp.conf
+
 micro project-spec/meta-user/recipes-bsp/device-tree/files/system-user.dtsi
 
 /include/ "system-conf.dtsi"

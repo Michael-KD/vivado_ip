@@ -1,0 +1,7 @@
+# Python dependencies for zynq_client.py and optical_sim.py
+# Install: pip install -r requirements.txt
+
+PyQt6>=6.4.0
+numpy>=1.20.0
+matplotlib>=3.5.0
+scipy>=1.7.0
