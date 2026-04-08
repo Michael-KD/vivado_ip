@@ -48,3 +48,12 @@ petalinux-boot --qemu --kernel
 
 setenv bootargs "earlycon console=ttyPS0,921600 root=/dev/mmcblk0p2 rw rootwait cma=256M uio_pdrv_genirq.of_id=generic-uio"
 boot
+
+
+
+
+
+
+Alinx to Trenz:
+
+primary sd/sdio in the petalinux config was psu_sd_0, changed to psu_sd_1 

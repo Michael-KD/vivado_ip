@@ -1,0 +1,274 @@
+▒Xilinx Zynq MP First Stage Boot Loader
+Release 2021.2   Oct 13 2021  -  07:15:53
+NOTICE:  BL31: v2.4(release):xlnx_rebase_v2.4_2021.1_update1-23-g9188496b9
+NOTICE:  BL31: Built : 07:41:24, Oct 13 2021
+
+
+U-Boot 2021.01 (Oct 12 2021 - 09:28:42 +0000)
+
+CPU:   ZynqMP
+Silicon: v3
+Board: Xilinx ZynqMP
+DRAM:  2 GiB
+PMUFW:  v1.1
+EL Level:       EL2
+Chip ID:        zu2cg
+NAND:  0 MiB
+MMC:   mmc@ff160000: 0, mmc@ff170000: 1
+Loading Environment from FAT... Unable to use mmc 0:0... In:    serial
+Out:   serial
+Err:   serial
+Bootmode: SD_MODE1
+Reset reason:   EXTERNAL
+Net:
+ZYNQ GEM: ff0e0000, mdio bus ff0e0000, phyaddr -1, interface rgmii-id
+eth0: ethernet@ff0e0000
+Hit any key to stop autoboot:  0
+switch to partitions #0, OK
+mmc1 is current device
+Scanning mmc 1:1...
+Found U-Boot script /boot.scr
+2710 bytes read in 13 ms (203.1 KiB/s)
+## Executing script at 20000000
+Trying to load boot images from mmc1
+21451264 bytes read in 1441 ms (14.2 MiB/s)
+## Flattened Device Tree blob at 00100000
+   Booting using the fdt blob at 0x100000
+   Loading Device Tree to 000000007dd05000, end 000000007dd115e5 ... OK
+
+Starting kernel ...
+
+[    0.000000] Booting Linux on physical CPU 0x0000000000 [0x410fd034]
+[    0.000000] Linux version 5.10.0-xilinx-v2021.2 (oe-user@oe-host) (aarch64-xilinx-linux-gcc (GCC) 10.2.0, GNU ld (GNU Binutils) 2.35.1) #1 SMP Tue Oct 12 09:30:57 UTC 2021
+[    0.000000] Machine model: xlnx,zynqmp
+[    0.000000] earlycon: cdns0 at MMIO 0x00000000ff000000 (options '115200n8')
+[    0.000000] printk: bootconsole [cdns0] enabled
+[    0.000000] efi: UEFI not found.
+[    0.000000] cma: Reserved 256 MiB at 0x000000006dc00000
+[    0.000000] Zone ranges:
+[    0.000000]   DMA32    [mem 0x0000000000000000-0x000000007fefffff]
+[    0.000000]   Normal   empty
+[    0.000000] Movable zone start for each node
+[    0.000000] Early memory node ranges
+[    0.000000]   node   0: [mem 0x0000000000000000-0x000000007fefffff]
+[    0.000000] Zeroed struct page in unavailable ranges: 256 pages
+[    0.000000] Initmem setup node 0 [mem 0x0000000000000000-0x000000007fefffff]
+[    0.000000] psci: probing for conduit method from DT.
+[    0.000000] psci: PSCIv1.1 detected in firmware.
+[    0.000000] psci: Using standard PSCI v0.2 function IDs
+[    0.000000] psci: MIGRATE_INFO_TYPE not supported.
+[    0.000000] psci: SMC Calling Convention v1.2
+[    0.000000] percpu: Embedded 22 pages/cpu s49624 r8192 d32296 u90112
+[    0.000000] Detected VIPT I-cache on CPU0
+[    0.000000] CPU features: detected: ARM erratum 845719
+[    0.000000] Built 1 zonelists, mobility grouping on.  Total pages: 515844
+[    0.000000] Kernel command line: earlycon console=ttyPS0,921600 root=/dev/mmcblk1p2 rw rootwait cma=256M uio_pdrv_genirq.of_id=generic-uio
+[    0.000000] Dentry cache hash table entries: 262144 (order: 9, 2097152 bytes, linear)
+[    0.000000] Inode-cache hash table entries: 131072 (order: 8, 1048576 bytes, linear)
+[    0.000000] mem auto-init: stack:off, heap alloc:off, heap free:off
+[    0.000000] Memory: 1772100K/2096128K available (13888K kernel code, 980K rwdata, 3904K rodata, 2048K init, 588K bss, 61884K reserved, 262144K cma-reserved)
+[    0.000000] rcu: Hierarchical RCU implementation.
+[    0.000000] rcu:     RCU event tracing is enabled.
+[    0.000000] rcu:     RCU restricting CPUs from NR_CPUS=4 to nr_cpu_ids=2.
+[    0.000000] rcu: RCU calculated value of scheduler-enlistment delay is 25 jiffies.
+[    0.000000] rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=2
+[    0.000000] NR_IRQS: 64, nr_irqs: 64, preallocated irqs: 0
+[    0.000000] GIC: Adjusting CPU interface base to 0x00000000f902f000
+[    0.000000] GIC: Using split EOI/Deactivate mode
+[    0.000000] random: get_random_bytes called from start_kernel+0x31c/0x524 with crng_init=0
+[    0.000000] arch_timer: cp15 timer(s) running at 33.33MHz (phys).
+[    0.000000] clocksource: arch_sys_counter: mask: 0xffffffffffffff max_cycles: 0x7b00c3848, max_idle_ns: 440795203375 ns
+[    0.000003] sched_clock: 56 bits at 33MHz, resolution 30ns, wraps every 2199023255545ns
+[    0.008283] Console: colour dummy device 80x25
+[    0.012393] Calibrating delay loop (skipped), value calculated using timer frequency.. 66.66 BogoMIPS (lpj=133333)
+[    0.022669] pid_max: default: 32768 minimum: 301
+[    0.027393] Mount-cache hash table entries: 4096 (order: 3, 32768 bytes, linear)
+[    0.034613] Mountpoint-cache hash table entries: 4096 (order: 3, 32768 bytes, linear)
+[    0.043481] rcu: Hierarchical SRCU implementation.
+[    0.047414] EFI services will not be available.
+[    0.051751] smp: Bringing up secondary CPUs ...
+[    0.056550] Detected VIPT I-cache on CPU1
+[    0.056590] CPU1: Booted secondary processor 0x0000000001 [0x410fd034]
+[    0.056657] smp: Brought up 1 node, 2 CPUs
+[    0.070676] SMP: Total of 2 processors activated.
+[    0.075348] CPU features: detected: 32-bit EL0 Support
+[    0.080451] CPU features: detected: CRC32 instructions
+[    0.085588] CPU: All CPU(s) started at EL2
+[    0.089630] alternatives: patching kernel code
+[    0.095135] devtmpfs: initialized
+[    0.101731] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[    0.107017] futex hash table entries: 512 (order: 3, 32768 bytes, linear)
+[    0.120454] pinctrl core: initialized pinctrl subsystem
+[    0.120885] DMI not present or invalid.
+[    0.124039] NET: Registered protocol family 16
+[    0.129611] DMA: preallocated 256 KiB GFP_KERNEL pool for atomic allocations
+[    0.135391] DMA: preallocated 256 KiB GFP_KERNEL|GFP_DMA32 pool for atomic allocations
+[    0.143188] audit: initializing netlink subsys (disabled)
+[    0.148594] audit: type=2000 audit(0.100:1): state=initialized audit_enabled=0 res=1
+[    0.148988] hw-breakpoint: found 6 breakpoint and 4 watchpoint registers.
+[    0.162985] ASID allocator initialised with 65536 entries
+[    0.168432] Serial: AMBA PL011 UART driver
+[    0.195870] HugeTLB registered 1.00 GiB page size, pre-allocated 0 pages
+[    0.196939] HugeTLB registered 32.0 MiB page size, pre-allocated 0 pages
+[    0.203599] HugeTLB registered 2.00 MiB page size, pre-allocated 0 pages
+[    0.210262] HugeTLB registered 64.0 KiB page size, pre-allocated 0 pages
+[    1.411164] cryptd: max_cpu_qlen set to 1000
+[    1.438388] DRBG: Continuing without Jitter RNG
+[    1.517987] raid6: neonx8   gen()  1872 MB/s
+[    1.586048] raid6: neonx8   xor()  1395 MB/s
+[    1.654132] raid6: neonx4   gen()  1914 MB/s
+[    1.722200] raid6: neonx4   xor()  1370 MB/s
+[    1.790277] raid6: neonx2   gen()  1816 MB/s
+[    1.858345] raid6: neonx2   xor()  1250 MB/s
+[    1.926441] raid6: neonx1   gen()  1549 MB/s
+[    1.994500] raid6: neonx1   xor()  1067 MB/s
+[    2.062580] raid6: int64x8  gen()  1257 MB/s
+[    2.130644] raid6: int64x8  xor()   674 MB/s
+[    2.198729] raid6: int64x4  gen()  1401 MB/s
+[    2.266807] raid6: int64x4  xor()   716 MB/s
+[    2.334884] raid6: int64x2  gen()  1222 MB/s
+[    2.402955] raid6: int64x2  xor()   656 MB/s
+[    2.471037] raid6: int64x1  gen()   901 MB/s
+[    2.539118] raid6: int64x1  xor()   452 MB/s
+[    2.539157] raid6: using algorithm neonx4 gen() 1914 MB/s
+[    2.543114] raid6: .... xor() 1370 MB/s, rmw enabled
+[    2.548044] raid6: using neon recovery algorithm
+[    2.553109] iommu: Default domain type: Translated
+[    2.557706] SCSI subsystem initialized
+[    2.561348] usbcore: registered new interface driver usbfs
+[    2.566682] usbcore: registered new interface driver hub
+[    2.571943] usbcore: registered new device driver usb
+[    2.576992] mc: Linux media interface: v0.10
+[    2.581195] videodev: Linux video capture interface: v2.00
+[    2.586666] EDAC MC: Ver: 3.0.0
+[    2.590146] zynqmp-ipi-mbox mailbox@ff990400: Registered ZynqMP IPI mbox with TX/RX channels.
+[    2.598412] FPGA manager framework
+[    2.601716] Advanced Linux Sound Architecture Driver Initialized.
+[    2.607954] Bluetooth: Core ver 2.22
+[    2.611202] NET: Registered protocol family 31
+[    2.615606] Bluetooth: HCI device and connection manager initialized
+[    2.621919] Bluetooth: HCI socket layer initialized
+[    2.626761] Bluetooth: L2CAP socket layer initialized
+[    2.631785] Bluetooth: SCO socket layer initialized
+[    2.636898] clocksource: Switched to clocksource arch_sys_counter
+[    2.642812] VFS: Disk quotas dquot_6.6.0
+[    2.646614] VFS: Dquot-cache hash table entries: 512 (order 0, 4096 bytes)
+[    2.658001] NET: Registered protocol family 2
+[    2.658422] tcp_listen_portaddr_hash hash table entries: 1024 (order: 2, 16384 bytes, linear)
+[    2.666237] TCP established hash table entries: 16384 (order: 5, 131072 bytes, linear)
+[    2.674193] TCP bind hash table entries: 16384 (order: 6, 262144 bytes, linear)
+[    2.681561] TCP: Hash tables configured (established 16384 bind 16384)
+[    2.687888] UDP hash table entries: 1024 (order: 3, 32768 bytes, linear)
+[    2.694535] UDP-Lite hash table entries: 1024 (order: 3, 32768 bytes, linear)
+[    2.701705] NET: Registered protocol family 1
+[    2.706209] RPC: Registered named UNIX socket transport module.
+[    2.711801] RPC: Registered udp transport module.
+[    2.716462] RPC: Registered tcp transport module.
+[    2.721133] RPC: Registered tcp NFSv4.1 backchannel transport module.
+[    2.728195] PCI: CLS 0 bytes, default 64
+[    2.759832] Initialise system trusted keyrings
+[    2.759970] workingset: timestamp_bits=46 max_order=19 bucket_order=0
+[    2.765796] NFS: Registering the id_resolver key type
+[    2.770087] Key type id_resolver registered
+[    2.774234] Key type id_legacy registered
+[    2.778220] nfs4filelayout_init: NFSv4 File Layout Driver Registering...
+[    2.784872] jffs2: version 2.2. (NAND) (SUMMARY)  © 2001-2006 Red Hat, Inc.
+[    2.832941] NET: Registered protocol family 38
+[    2.832986] xor: measuring software checksum speed
+[    2.841275]    8regs           :  2068 MB/sec
+[    2.845337]    32regs          :  2449 MB/sec
+[    2.850103]    arm64_neon      :  2083 MB/sec
+[    2.850143] xor: using function: 32regs (2449 MB/sec)
+[    2.854505] Key type asymmetric registered
+[    2.858564] Asymmetric key parser 'x509' registered
+[    2.863428] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 247)
+[    2.870762] io scheduler mq-deadline registered
+[    2.875257] io scheduler kyber registered
+[    2.881407] ps_pcie_dma init()
+[    2.910152] Serial: 8250/16550 driver, 4 ports, IRQ sharing disabled
+[    2.912018] Serial: AMBA driver
+[    2.916695] cacheinfo: Unable to detect cache hierarchy for CPU 0
+[    2.925049] brd: module loaded
+[    2.929366] loop: module loaded
+[    2.930250] mtdoops: mtd device (mtddev=name/number) must be supplied
+[    2.934855] libphy: Fixed MDIO Bus: probed
+[    2.938763] tun: Universal TUN/TAP device driver, 1.6
+[    2.942453] CAN device driver interface
+[    2.947027] usbcore: registered new interface driver asix
+[    2.951580] usbcore: registered new interface driver ax88179_178a
+[    2.957612] usbcore: registered new interface driver cdc_ether
+[    2.963404] usbcore: registered new interface driver net1080
+[    2.969027] usbcore: registered new interface driver cdc_subset
+[    2.974910] usbcore: registered new interface driver zaurus
+[    2.980458] usbcore: registered new interface driver cdc_ncm
+[    2.987013] usbcore: registered new interface driver uas
+[    2.991367] usbcore: registered new interface driver usb-storage
+[    2.997954] rtc_zynqmp ffa60000.rtc: registered as rtc0
+[    3.002506] rtc_zynqmp ffa60000.rtc: setting system clock to 1970-01-01T00:00:14 UTC (14)
+[    3.010671] i2c /dev entries driver
+[    3.015802] usbcore: registered new interface driver uvcvideo
+[    3.019783] USB Video Class driver (1.1.1)
+[    3.024387] Bluetooth: HCI UART driver ver 2.3
+[    3.028263] Bluetooth: HCI UART protocol H4 registered
+[    3.033363] Bluetooth: HCI UART protocol BCSP registered
+[    3.038654] Bluetooth: HCI UART protocol LL registered
+[    3.043744] Bluetooth: HCI UART protocol ATH3K registered
+[    3.049119] Bluetooth: HCI UART protocol Three-wire (H5) registered
+[    3.055370] Bluetooth: HCI UART protocol Intel registered
+[    3.060714] Bluetooth: HCI UART protocol QCA registered
+[    3.065914] usbcore: registered new interface driver bcm203x
+[    3.071539] usbcore: registered new interface driver bpa10x
+[    3.077072] usbcore: registered new interface driver bfusb
+[    3.082526] usbcore: registered new interface driver btusb
+[    3.087983] usbcore: registered new interface driver ath3k
+[    3.093480] EDAC MC: ECC not enabled
+[    3.097076] EDAC DEVICE0: Giving out device to module edac controller cache_err: DEV edac (POLLED)
+[    3.106027] EDAC DEVICE1: Giving out device to module zynqmp-ocm-edac controller zynqmp_ocm: DEV ff960000.memory-controller (INTERRUPT)
+[    3.118254] sdhci: Secure Digital Host Controller Interface driver
+[    3.124102] sdhci: Copyright(c) Pierre Ossman
+[    3.128425] sdhci-pltfm: SDHCI platform and OF driver helper
+[    3.134391] ledtrig-cpu: registered to indicate activity on CPUs
+[    3.140029] SMCCC: SOC_ID: ARCH_SOC_ID not implemented, skipping ....
+[    3.146455] zynqmp_firmware_probe Platform Management API v1.1
+[    3.152216] zynqmp_firmware_probe Trustzone version v1.0
+[    3.216759] securefw securefw: securefw probed
+[    3.217031] alg: No test for xilinx-zynqmp-aes (zynqmp-aes)
+[    3.221255] zynqmp_aes firmware:zynqmp-firmware:zynqmp-aes: AES Successfully Registered
+[    3.229351] alg: No test for xilinx-keccak-384 (zynqmp-keccak-384)
+[    3.235495] alg: No test for xilinx-zynqmp-rsa (zynqmp-rsa)
+[    3.241003] usbcore: registered new interface driver usbhid
+[    3.246363] usbhid: USB HID core driver
+[    3.253135] ARM CCI_400_r1 PMU driver probed
+[    3.253635] fpga_manager fpga0: Xilinx ZynqMP FPGA Manager registered
+[    3.261323] usbcore: registered new interface driver snd-usb-audio
+[    3.267851] pktgen: Packet Generator for packet performance testing. Version: 2.75
+[    3.275004] Initializing XFRM netlink socket
+[    3.278785] NET: Registered protocol family 10
+[    3.283553] Segment Routing with IPv6
+[    3.286931] sit: IPv6, IPv4 and MPLS over IPv4 tunneling driver
+[    3.293016] NET: Registered protocol family 17
+[    3.297063] NET: Registered protocol family 15
+[    3.301472] can: controller area network core
+[    3.305819] NET: Registered protocol family 29
+[    3.310200] can: raw protocol
+[    3.313140] can: broadcast manager protocol
+[    3.317293] can: netlink gateway - max_hops=1
+[    3.321703] Bluetooth: RFCOMM TTY layer initialized
+[    3.326474] Bluetooth: RFCOMM socket layer initialized
+[    3.331576] Bluetooth: RFCOMM ver 1.11
+[    3.335291] Bluetooth: BNEP (Ethernet Emulation) ver 1.3
+[    3.340559] Bluetooth: BNEP filters: protocol multicast
+[    3.345751] Bluetooth: BNEP socket layer initialized
+[    3.350679] Bluetooth: HIDP (Human Interface Emulation) ver 1.2
+[    3.356563] Bluetooth: HIDP socket layer initialized
+[    3.361614] 9pnet: Installing 9P2000 support
+[    3.365746] Key type dns_resolver registered
+[    3.370096] registered taskstats version 1
+[    3.374034] Loading compiled-in X.509 certificates
+[    3.379815] Btrfs loaded, crc32c=crc32c-generic
+[    3.392624] ff000000.serial: ttyPS0 at MMIO 0xff000000 (irq = 54, base_baud = 6249999) is a xuartps
+B▒▒▒ǈ{▒▒Ǣj▒wΈj▒w΂k▒▒▒▒▒B▒^f▒▒^▒H▒^f▒nJ▒CJ▒k▒▒▒^J▒CJ▒R▒▒▒▒^▒R▒^f▒▒XSf^f▒▒▒R▒▒▒r▒f▒R▒▒▒▒▒f▒R▒▒▒r▒f▒R▒▒▒r▒f▒R▒▒▒r▒f▒R▒▒▒r▒f▒R▒▒▒r▒f▒R▒▒▒r▒f▒R▒▒▒r▒f▒R▒▒▒r▒f▒R▒▒▒r▒f▒R▒ǔ▒▒f▒R▒▒▒r▒f▒R▒▒▒r▒f▒R▒Ǖ▒▒f▒R▒▒▒r▒f▒R▒▒▒▒▒▒▒R▒▒▒▒▒g3R▒▒N▒▒▒Vj▒▒W▒▒▒▒R▒▒▒▒^v▒R▒▒▒▒w▒~R▒▒Ϟ^v▒R▒▒GKw~O߽ۜ▒v▒▒▒▒▒▒▒R▒^▒▒R▒▒▒R▒▒v▒▒▒▒▒b5G▒▒WK▒^b▒R▒G▒▒▒▒▒▒Z▒▒▒▒▒▒▒▒▒R▒KW▒▒g▒▒R▒▒▒KW▒▒NRK▒▒RƮ▒▒W▒RƮJ▒W▒R▒▒NF▒W▒RƮ▒▒W▒R▒▒3N▒▒▒▒▒▒▒▒R▒▒▒Ɨ▒▒NNJ▒R▒▒▒O▒F▒R▒▒▒▒▒▒kR▒▒▒▒F{G▒▒FzG▒V▒O▒&J▒▒▒▒R▒BP▒Jf▒▒▒R▒▒3▒{▒֝▒▒▒▒r▒▒▒▒~R▒▒R▒▒▒▒▒S▒▒vR▒G▒^▒▒kR▒G▒▒▒F▒▒▒▒&▒▒V▒O▒&▒▒▒▒RFJ^RF▒▒▒R▒NNBNN▒R▒^▒▒▒▒▒R▒^▒▒▒▒▒R▒R▒▒R▒▒▒▒j▒▒▒▒RG▒W▒G▒G▒RsgW▒g▒G▒RG▒▒▒gR▒Ǭ▒▒R▒BR▒rr▒jR▒GSB▒R▒r▒▒[▒R▒GS▒Z▒R▒Fj▒[QZ▒R▒J▒▒O▒▒R▒▒^R▒▒▒R▒▒▒▒▒▒▒▒N▒▒▒▒▒R▒▒^▒3▒Rs▒^▒3▒R▒▒vR▒▒▒▒▒R▒▒▒▒▒▒O>Z{V▒▒K▒R▒▒▒R▒▒▒jR▒G▒▒▒▒▒▒▒▒R▒▒▒{R▒W▒▒▒vR▒W▒▒▒vR▒W▒▒▒vR▒▒W▒R▒▒▒▒▒▒מ▒▒FR▒O▒▒R▒▒▒O▒▒▒OG▒▒▒▒▒▒Ǭ▒▒▒▒▒▒▒▒▒▒▒f▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒W▒▒▒▒w▒▒▒▒NGVVg~k▒▒▒O▒_▒joB▒▒▒Nz~F÷R"▒vҟ¬GWw▒▒▒Ҭ▒▒▒▒▒▒▒▒▒▒▒▒
+PetaLinux 2021.2 pacs-petalinux ttyPS0
+
+
+                                                                                                                                                                                                                                                                                                                            root@pacs-petalinux:~#
