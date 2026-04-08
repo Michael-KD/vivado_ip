@@ -33,6 +33,9 @@ micro project-spec/meta-user/recipes-bsp/device-tree/files/system-user.dtsi
 - start testing adc
 - setup a dma test
 
+
+ls /sys/bus/platform/devices
+
 # SD CARD
 petalinux-config --get-hw-description ../../hardware/pacs-vivado/ ***.xsa
 petalinux-build
