@@ -55,7 +55,7 @@ class ZynqClient:
         if self.sock:
             try:
                 self.sock.close()
-            except:
+            except Exception:
                 pass
         self.sock = None
         self.connected = False
@@ -328,6 +328,10 @@ class DACTab(QWidget):
         self.en1_cb = QCheckBox("DAC 1 Clock Enable")
         self.en1_cb.stateChanged.connect(self.on_enable_change)
         control_layout.addWidget(self.en1_cb, 2, 0, 1, 2)
+
+        self.latch_oe_cb = QCheckBox("Latch Output Enable")
+        self.latch_oe_cb.stateChanged.connect(self.on_latch_change)
+        control_layout.addWidget(self.latch_oe_cb, 3, 0, 1, 2)
         
         layout.addWidget(control_group)
         
@@ -373,11 +377,20 @@ class DACTab(QWidget):
     
     def on_enable_change(self, _):
         if self.client.connected:
-            ctrl = self._get_current_ctrl() & 0x01  # Keep mode bit
+            ctrl = self._get_current_ctrl() & 0x09  # Keep mode and latch bits
             if self.en0_cb.isChecked():
                 ctrl |= 0x02
             if self.en1_cb.isChecked():
                 ctrl |= 0x04
+            self.client.write_reg("dac", 1, ctrl)
+
+    def on_latch_change(self, state):
+        if self.client.connected:
+            ctrl = self._get_current_ctrl()
+            if state:
+                ctrl |= 0x08
+            else:
+                ctrl &= ~0x08
             self.client.write_reg("dac", 1, ctrl)
     
     def on_prescaler(self, value):
@@ -424,6 +437,10 @@ class DACTab(QWidget):
         self.en1_cb.blockSignals(True)
         self.en1_cb.setChecked(bool(ctrl & 0x04))
         self.en1_cb.blockSignals(False)
+
+        self.latch_oe_cb.blockSignals(True)
+        self.latch_oe_cb.setChecked(bool(ctrl & 0x08))
+        self.latch_oe_cb.blockSignals(False)
         
         self.prescaler_spin.blockSignals(True)
         self.prescaler_spin.setValue(pre)

@@ -21,6 +21,7 @@
 #define MASK_MODE   (1 << 0) // Bit 0: 0=Passthrough, 1=Manual
 #define MASK_EN0    (1 << 1) // Bit 1: Enable DAC 0 Clock
 #define MASK_EN1    (1 << 2) // Bit 2: Enable DAC 1 Clock
+#define MASK_LATCH  (1 << 3) // Bit 3: Latch Output Enable
 
 int main() {
     int memfd;
@@ -56,6 +57,7 @@ int main() {
     mvprintw(2, 2,  "DAC SOURCE:      [            ]");
     mvprintw(3, 2,  "DAC 0 CLOCK:     [     ]");
     mvprintw(4, 2,  "DAC 1 CLOCK:     [     ]");
+    mvprintw(5, 2,  "LATCH OUTPUT:    [     ]");
     
     // Output Box
     mvprintw(6, 0,  "=== OUTPUT DATA ===");
@@ -76,11 +78,12 @@ int main() {
     mvprintw(19, 0, "=== CONTROLS ===");
     mvprintw(20, 2, "'m'       : Toggle Mode (Manual / Passthrough)");
     mvprintw(21, 2, "'0' / '1' : Toggle DAC Channels");
-    mvprintw(22, 2, "UP/DOWN   : Adjust Value (+/- 100)");
-    mvprintw(23, 2, "LEFT/RIGHT: Fine Tune (+/- 1)");
-    mvprintw(24, 2, "']' / '[' : Adjust Speed");
-    mvprintw(25, 2, "'r'       : Toggle Ramp Mode (0->4095 sweep)");
-    mvprintw(26, 2, "'q'       : Quit");
+    mvprintw(22, 2, "'l'       : Toggle Latch Output Enable");
+    mvprintw(23, 2, "UP/DOWN   : Adjust Value (+/- 100)");
+    mvprintw(24, 2, "LEFT/RIGHT: Fine Tune (+/- 1)");
+    mvprintw(25, 2, "']' / '[' : Adjust Speed");
+    mvprintw(26, 2, "'r'       : Toggle Ramp Mode (0->4095 sweep)");
+    mvprintw(27, 2, "'q'       : Quit");
     refresh();
 
     // --- RAMP STATE ---
@@ -149,6 +152,7 @@ int main() {
         int mode_manual = (raw_r1 & MASK_MODE);
         int en_0        = (raw_r1 & MASK_EN0);
         int en_1        = (raw_r1 & MASK_EN1);
+        int latch_en    = (raw_r1 & MASK_LATCH);
         
         // Parse Value
         uint16_t dac_val = raw_r0 & 0x0FFF; // Mask to 12 bits
@@ -166,6 +170,9 @@ int main() {
 
         if (en_1) { attron(A_REVERSE); mvprintw(4, 20, "ON   "); attroff(A_REVERSE); }
         else      { mvprintw(4, 20, "OFF  "); }
+
+        if (latch_en) { attron(A_REVERSE); mvprintw(5, 20, "ON   "); attroff(A_REVERSE); }
+        else          { mvprintw(5, 20, "OFF  "); }
 
         // 2. Data Values
         mvprintw(7, 20, "%04d", dac_val);
@@ -208,6 +215,7 @@ int main() {
                 // Toggle Enables
                 case '0': regs[REG_CTRL] = raw_r1 ^ MASK_EN0; break;
                 case '1': regs[REG_CTRL] = raw_r1 ^ MASK_EN1; break;
+                case 'l': regs[REG_CTRL] = raw_r1 ^ MASK_LATCH; break;
 
                 // Value Adjust (Manual Mode)
                 case KEY_UP: 

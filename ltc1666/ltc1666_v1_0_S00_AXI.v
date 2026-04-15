@@ -16,6 +16,7 @@
 	(
 		// Users to add ports here
 		output wire [11:0] dac_data,  	// 12 Data pins to DAC
+		output wire latch_oe,         	// Latch output enable for DAC interface
 		output wire clk_0,            	// Clock output 0
 		output wire clk_1,            	// Clock output 1
 		input wire [11:0] data_in,      // 12 bit data input to DAC from external source
@@ -226,7 +227,7 @@
 	    begin
 	      slv_reg0 <= 0;
 	      slv_reg1 <= 0;
-	      slv_reg2 <= 0;
+	      slv_reg2 <= 4; // Default prescaler value, 10MHz
 	      slv_reg3 <= 0;
 	    end 
 	  else begin
@@ -435,6 +436,7 @@
     // Using ODDRE1 primitives for glitch-free clock output
     // slv_reg1[1] = Enable DAC 0 Clock
     // slv_reg1[2] = Enable DAC 1 Clock
+	// slv_reg1[3] = DAC latch output enable
     
     // ODDRE1 for DAC Clock 0
     ODDRE1 #(
@@ -473,6 +475,7 @@
     
     wire mode_manual = slv_reg1[0];
     assign dac_data = (mode_manual) ? slv_reg0[11:0] : data_in;
+	assign latch_oe = slv_reg1[3];
 
 
 	// User logic ends

@@ -16,6 +16,7 @@
 	(
 		// Users to add ports here
 		output wire [11:0] dac_data,  	// 12 Data pins to DAC
+		output wire latch_oe,         	// Latch output enable for DAC interface
 		output wire clk_0,            	// Clock output 0
 		output wire clk_1,            	// Clock output 1
 		input wire [11:0] data_in,      // 16 bit data input to DAC from external source
@@ -74,6 +75,7 @@
 		.S_AXI_RREADY(s00_axi_rready),
 
 		.dac_data(dac_data),
+		.latch_oe(latch_oe),
 		.clk_0(clk_0),
 		.clk_1(clk_1),
 		.data_in(data_in)

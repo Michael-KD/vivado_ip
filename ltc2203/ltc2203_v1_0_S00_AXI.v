@@ -227,7 +227,7 @@
 	    begin
 	      slv_reg0 <= 0;
 	      slv_reg1 <= 0;
-	      slv_reg2 <= 0;
+	      slv_reg2 <= 4; // Default prescaler value, 10MHz
 	      slv_reg3 <= 0;
 	    end 
 	  else begin
