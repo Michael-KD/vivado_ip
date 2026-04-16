@@ -3,7 +3,8 @@
 zynq_client.py - PyQt6 GUI for controlling Zynq AXI peripherals
 
 Connects to zynq_server running on the Zynq board and provides a unified
-interface for controlling ADC (LTC2203), DAC (LTC1666), and SPGD peripherals.
+interface for controlling variable numbers of ADC (LTC2203) and DAC (LTC1666) 
+peripherals via dynamic addressing.
 
 Usage: python zynq_client.py [host] [port]
        Default: localhost:5000
@@ -20,16 +21,28 @@ from PyQt6.QtWidgets import (
     QComboBox, QProgressBar, QGroupBox, QStatusBar, QLineEdit, QMessageBox,
     QSlider, QFrame
 )
-from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QThread
+from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QFont, QPalette, QColor
 
+# =============================================================================
+# Hardware Addresses Configuration
+# =============================================================================
+
+# 1 ADC
+ADC_ADDRS = [0x80030000]
+
+# 8 DACs
+DAC_ADDRS = [0x80040000 + i * 0x10000 for i in range(8)]
+
+# 1 SPGD
+SPGD_ADDR = 0x80000000
 
 # =============================================================================
 # Network Client
 # =============================================================================
 
 class ZynqClient:
-    """TCP/JSON client for communicating with zynq_server."""
+    """TCP/JSON client for communicating with zynq_server using dynamic addresses."""
     
     def __init__(self, host: str = "localhost", port: int = 5000):
         self.host = host
@@ -38,7 +51,6 @@ class ZynqClient:
         self.connected = False
     
     def connect(self) -> bool:
-        """Establish connection to server."""
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.settimeout(2.0)
@@ -51,7 +63,6 @@ class ZynqClient:
             return False
     
     def disconnect(self):
-        """Close connection."""
         if self.sock:
             try:
                 self.sock.close()
@@ -61,19 +72,15 @@ class ZynqClient:
         self.connected = False
     
     def send_command(self, cmd: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Send JSON command and receive response."""
         if not self.connected or not self.sock:
             return None
-        
         try:
-            # Send command with newline
             msg = json.dumps(cmd) + "\n"
             self.sock.sendall(msg.encode())
             
-            # Receive response (newline-delimited)
             data = b""
             while b"\n" not in data:
-                chunk = self.sock.recv(4096)
+                chunk = self.sock.recv(65536)
                 if not chunk:
                     self.connected = False
                     return None
@@ -85,54 +92,249 @@ class ZynqClient:
             print(f"Command failed: {e}")
             self.connected = False
             return None
+            
+    def read_all(self, addresses: list[int]) -> Optional[Dict[str, Any]]:
+        """Fetch all register values for the requested addresses."""
+        return self.send_command({"cmd": "read_all", "addresses": addresses})
     
-    def get_all(self) -> Optional[Dict[str, Any]]:
-        """Fetch all register values."""
-        return self.send_command({"cmd": "get_all"})
-    
-    def write_reg(self, device: str, reg: int, value: int) -> bool:
-        """Write to a device register."""
+    def write_reg(self, addr: int, reg: int, value: int) -> bool:
+        """Write to a device register by its address."""
         resp = self.send_command({
             "cmd": "write",
-            "device": device,
+            "addr": addr,
             "reg": reg,
             "value": value
         })
         return resp is not None and resp.get("status") == "ok"
     
-    def pulse_bit(self, device: str, bit: int) -> bool:
-        """Pulse a control bit."""
+    def pulse_bit(self, addr: int, bit: int) -> bool:
+        """Pulse a control bit by its address."""
         resp = self.send_command({
             "cmd": "pulse",
-            "device": device,
+            "addr": addr,
             "bit": bit
         })
         return resp is not None and resp.get("status") == "ok"
 
 
 # =============================================================================
-# ADC Tab (LTC2203)
+# Master Tab (SPGD + System Overview)
+# =============================================================================
+
+class MasterTab(QWidget):
+    """Master Control tab with System Start, SPGD, and Master ADC/DAC overviews."""
+    def __init__(self, client: ZynqClient, adc_addrs: list[int], dac_addrs: list[int], spgd_addr: int):
+        super().__init__()
+        self.client = client
+        self.adc_addrs = adc_addrs
+        self.dac_addrs = dac_addrs
+        self.spgd_addr = spgd_addr
+        
+        self.spgd_ctrl = 0
+        self.init_ui()
+        
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # --- System Control ---
+        sys_group = QGroupBox("System Startup")
+        sys_layout = QHBoxLayout(sys_group)
+        self.start_sys_btn = QPushButton("Start System")
+        self.start_sys_btn.clicked.connect(self.on_start_sys)
+        self.start_sys_btn.setFont(QFont("", 14, QFont.Weight.Bold))
+        sys_layout.addWidget(self.start_sys_btn)
+        layout.addWidget(sys_group)
+
+        # --- SPGD Section ---
+        spgd_group = QGroupBox("SPGD Controller")
+        spgd_layout = QGridLayout(spgd_group)
+        self.spgd_enable_cb = QCheckBox("Enable SPGD Loop")
+        self.spgd_enable_cb.stateChanged.connect(self.on_spgd_enable)
+        self.spgd_passthrough_cb = QCheckBox("Passthrough Mode")
+        self.spgd_passthrough_cb.stateChanged.connect(self.on_spgd_passthrough)
+        spgd_layout.addWidget(self.spgd_enable_cb, 0, 0)
+        spgd_layout.addWidget(self.spgd_passthrough_cb, 0, 1)
+
+        self.spgd_settle_spin = QSpinBox()
+        self.spgd_settle_spin.setRange(0, 65535)
+        self.spgd_settle_spin.valueChanged.connect(self.on_spgd_params)
+        self.spgd_perturb_spin = QSpinBox()
+        self.spgd_perturb_spin.setRange(0, 65535)
+        self.spgd_perturb_spin.valueChanged.connect(self.on_spgd_params)
+        self.spgd_gamma_spin = QSpinBox()
+        self.spgd_gamma_spin.setRange(0, 2147483647)
+        self.spgd_gamma_spin.valueChanged.connect(self.on_spgd_gamma)
+        
+        spgd_layout.addWidget(QLabel("Settle:"), 1, 0)
+        spgd_layout.addWidget(self.spgd_settle_spin, 1, 1)
+        spgd_layout.addWidget(QLabel("Perturb:"), 2, 0)
+        spgd_layout.addWidget(self.spgd_perturb_spin, 2, 1)
+        spgd_layout.addWidget(QLabel("Gamma:"), 3, 0)
+        spgd_layout.addWidget(self.spgd_gamma_spin, 3, 1)
+        
+        self.spgd_reset_btn = QPushButton("Pulse Manual Reset")
+        self.spgd_reset_btn.clicked.connect(self.on_spgd_reset)
+        spgd_layout.addWidget(self.spgd_reset_btn, 4, 0, 1, 2)
+        layout.addWidget(spgd_group)
+        
+        # --- Master DAC Control ---
+        dac_group = QGroupBox("Master DAC Control (All DACs)")
+        dac_layout = QGridLayout(dac_group)
+        
+        self.master_dac_slider = QSlider(Qt.Orientation.Horizontal)
+        self.master_dac_slider.setRange(0, 4095)
+        self.master_dac_slider.valueChanged.connect(self.on_master_dac_slider)
+        
+        self.master_dac_spin = QSpinBox()
+        self.master_dac_spin.setRange(0, 4095)
+        self.master_dac_spin.valueChanged.connect(self.on_master_dac_spin)
+        
+        dac_layout.addWidget(QLabel("Set Value (Broadcast):"), 0, 0)
+        dac_layout.addWidget(self.master_dac_spin, 0, 1)
+        dac_layout.addWidget(self.master_dac_slider, 1, 0, 1, 2)
+        
+        layout.addWidget(dac_group)
+        
+        # --- Master ADC Overview ---
+        adc_group = QGroupBox("ADC Status Overview")
+        adc_layout = QVBoxLayout(adc_group)
+        self.adc_info_label = QLabel("Waiting for data...")
+        adc_layout.addWidget(self.adc_info_label)
+        layout.addWidget(adc_group)
+        
+        layout.addStretch()
+
+    def on_start_sys(self):
+        # Placeholder for start system
+        QMessageBox.information(self, "System Start", "Bootup sequence initiated (Placeholder).")
+
+    def on_spgd_enable(self, state):
+        if self.client.connected:
+            ctrl = self.spgd_ctrl
+            if state: ctrl |= 0x01
+            else:     ctrl &= ~0x01
+            self.client.write_reg(self.spgd_addr, 0, ctrl)
+            self.spgd_ctrl = ctrl
+            
+    def on_spgd_passthrough(self, state):
+        if self.client.connected:
+            ctrl = self.spgd_ctrl
+            if state: ctrl |= 0x02
+            else:     ctrl &= ~0x02
+            self.client.write_reg(self.spgd_addr, 0, ctrl)
+            self.spgd_ctrl = ctrl
+
+    def on_spgd_params(self, _):
+        if self.client.connected:
+            config = (self.spgd_perturb_spin.value() << 16) | self.spgd_settle_spin.value()
+            self.client.write_reg(self.spgd_addr, 1, config)
+            
+    def on_spgd_gamma(self, value):
+        if self.client.connected:
+            self.client.write_reg(self.spgd_addr, 2, value)
+            
+    def on_spgd_reset(self):
+        if self.client.connected:
+            self.client.pulse_bit(self.spgd_addr, 2)
+
+    def on_master_dac_slider(self, val):
+        self.master_dac_spin.blockSignals(True)
+        self.master_dac_spin.setValue(val)
+        self.master_dac_spin.blockSignals(False)
+        self._write_all_dacs(val)
+        
+    def on_master_dac_spin(self, val):
+        self.master_dac_slider.blockSignals(True)
+        self.master_dac_slider.setValue(val)
+        self.master_dac_slider.blockSignals(False)
+        self._write_all_dacs(val)
+        
+    def _write_all_dacs(self, val):
+        if self.client.connected:
+            for addr in self.dac_addrs:
+                self.client.write_reg(addr, 0, val)
+
+    def update_from_data(self, data: Dict):
+        # Update SPGD
+        spgd_d = data.get(str(self.spgd_addr), {})
+        if spgd_d:
+            self.spgd_ctrl = int(spgd_d.get("0", 0))
+            config = int(spgd_d.get("1", 0))
+            gamma = int(spgd_d.get("2", 0))
+            
+            self.spgd_enable_cb.blockSignals(True)
+            self.spgd_enable_cb.setChecked(bool(self.spgd_ctrl & 0x01))
+            self.spgd_enable_cb.blockSignals(False)
+            
+            self.spgd_passthrough_cb.blockSignals(True)
+            self.spgd_passthrough_cb.setChecked(bool(self.spgd_ctrl & 0x02))
+            self.spgd_passthrough_cb.blockSignals(False)
+            
+            self.spgd_settle_spin.blockSignals(True)
+            self.spgd_settle_spin.setValue(config & 0xFFFF)
+            self.spgd_settle_spin.blockSignals(False)
+            
+            self.spgd_perturb_spin.blockSignals(True)
+            self.spgd_perturb_spin.setValue((config >> 16) & 0xFFFF)
+            self.spgd_perturb_spin.blockSignals(False)
+            
+            self.spgd_gamma_spin.blockSignals(True)
+            self.spgd_gamma_spin.setValue(gamma)
+            self.spgd_gamma_spin.blockSignals(False)
+            
+        # Update ADC Overview
+        adc_texts = []
+        for i, addr in enumerate(self.adc_addrs):
+            adc_d = data.get(str(addr), {})
+            if adc_d:
+                raw = int(adc_d.get("0", 0))
+                val = raw & 0xFFFF
+                if val >= 0x8000:
+                    val -= 0x10000
+                voltage = (val / 32768.0) * 10.0
+                adc_texts.append(f"ADC {i} (0x{addr:08X}): {val:+7d} ({voltage:+7.3f} V)")
+        
+        if adc_texts:
+            self.adc_info_label.setText("\n".join(adc_texts))
+
+
+# =============================================================================
+# ADC Tab
 # =============================================================================
 
 class ADCTab(QWidget):
-    """Control panel for LTC2203 ADC."""
-    
-    def __init__(self, client: ZynqClient):
+    """Control panel for an ADC with dynamic dropdown selection."""
+    def __init__(self, client: ZynqClient, addrs: list[int]):
         super().__init__()
         self.client = client
+        self.addrs = addrs
+        self.current_addr = addrs[0] if addrs else 0
+        self.current_ctrl = 0
+        self.last_data = {}
         self.init_ui()
     
     def init_ui(self):
         layout = QVBoxLayout(self)
         
-        # --- ADC Reading Group ---
-        reading_group = QGroupBox("ADC Reading")
-        reading_layout = QGridLayout(reading_group)
+        # Target Selection
+        target_group = QGroupBox("Target Device")
+        target_layout = QHBoxLayout(target_group)
+        self.device_combo = QComboBox()
+        for i, addr in enumerate(self.addrs):
+            self.device_combo.addItem(f"ADC {i} (0x{addr:08X})", addr)
+        self.device_combo.currentIndexChanged.connect(self.on_device_changed)
+        target_layout.addWidget(QLabel("Select ADC:"))
+        target_layout.addWidget(self.device_combo)
+        target_layout.addStretch()
+        layout.addWidget(target_group)
+        
+        self.reading_group = QGroupBox(f"ADC Reading (0x{self.current_addr:08X})")
+        reading_layout = QGridLayout(self.reading_group)
         
         self.adc_value_label = QLabel("0")
         self.adc_value_label.setFont(QFont("Courier", 24, QFont.Weight.Bold))
         self.adc_value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        reading_layout.addWidget(QLabel("Raw Value (signed):"), 0, 0)
+        reading_layout.addWidget(QLabel("Raw Value:"), 0, 0)
         reading_layout.addWidget(self.adc_value_label, 0, 1)
         
         self.voltage_label = QLabel("0.000 V")
@@ -146,7 +348,6 @@ class ADCTab(QWidget):
         reading_layout.addWidget(QLabel("Overflow:"), 2, 0)
         reading_layout.addWidget(self.overflow_label, 2, 1)
         
-        # Bar graph
         self.adc_bar = QProgressBar()
         self.adc_bar.setMinimum(0)
         self.adc_bar.setMaximum(65535)
@@ -157,9 +358,8 @@ class ADCTab(QWidget):
         reading_layout.addWidget(self.adc_bar, 3, 1)
         reading_layout.addWidget(QLabel("+10V"), 3, 2)
         
-        layout.addWidget(reading_group)
+        layout.addWidget(self.reading_group)
         
-        # --- Control Group ---
         control_group = QGroupBox("Hardware Control")
         control_layout = QGridLayout(control_group)
         
@@ -169,7 +369,7 @@ class ADCTab(QWidget):
         
         control_layout.addWidget(QLabel("Clock Source:"), 1, 0)
         self.clock_source_combo = QComboBox()
-        self.clock_source_combo.addItems(["External (SMA)", "Internal"])
+        self.clock_source_combo.addItems(["External", "Internal"])
         self.clock_source_combo.currentIndexChanged.connect(self.on_clock_source)
         control_layout.addWidget(self.clock_source_combo, 1, 1)
         
@@ -185,56 +385,52 @@ class ADCTab(QWidget):
         
         layout.addWidget(control_group)
         layout.addStretch()
-    
+
+    def on_device_changed(self, index):
+        self.current_addr = self.device_combo.itemData(index)
+        self.reading_group.setTitle(f"ADC Reading (0x{self.current_addr:08X})")
+        if self.last_data:
+            self.update_from_data(self.last_data)
+            
     def on_output_enable(self, state):
         if self.client.connected:
-            ctrl = 0
-            resp = self.client.get_all()
-            if resp and resp.get("status") == "ok":
-                ctrl = resp["adc"]["ctrl"]
-            if state:
-                ctrl |= 0x01
-            else:
-                ctrl &= ~0x01
-            self.client.write_reg("adc", 1, ctrl)
-    
+            ctrl = self.current_ctrl
+            if state: ctrl |= 0x01
+            else:     ctrl &= ~0x01
+            self.client.write_reg(self.current_addr, 1, ctrl)
+            self.current_ctrl = ctrl
+            
     def on_clock_source(self, index):
         if self.client.connected:
-            ctrl = 0
-            resp = self.client.get_all()
-            if resp and resp.get("status") == "ok":
-                ctrl = resp["adc"]["ctrl"]
-            if index == 1:  # Internal
-                ctrl |= 0x02
-            else:  # External
-                ctrl &= ~0x02
-            self.client.write_reg("adc", 1, ctrl)
-    
+            ctrl = self.current_ctrl
+            if index == 1: ctrl |= 0x02
+            else:          ctrl &= ~0x02
+            self.client.write_reg(self.current_addr, 1, ctrl)
+            self.current_ctrl = ctrl
+            
     def on_prescaler(self, value):
         if self.client.connected:
-            self.client.write_reg("adc", 2, value)
+            self.client.write_reg(self.current_addr, 2, value)
     
-    def update_from_data(self, adc_data: Dict):
-        """Update UI from polled data."""
-        raw_data = int(adc_data.get("data", 0))
-        ctrl = int(adc_data.get("ctrl", 0))
-        pre = int(adc_data.get("pre", 0))
+    def update_from_data(self, data: Dict):
+        self.last_data = data
+        adc_data = data.get(str(self.current_addr), {})
+        if not adc_data:
+            return
+            
+        raw_data = int(adc_data.get("0", 0))
+        self.current_ctrl = int(adc_data.get("1", 0))
+        pre = int(adc_data.get("2", 0))
         
-        # Convert to signed 16-bit
         adc_val = raw_data & 0xFFFF
         if adc_val >= 0x8000:
             adc_val -= 0x10000
-        
         overflow = (raw_data >> 16) & 0x01
         
-        # Update value displays
         self.adc_value_label.setText(f"{adc_val:+6d}")
-        
-        # Voltage: ±10V full scale
         voltage = (adc_val / 32768.0) * 10.0
         self.voltage_label.setText(f"{voltage:+7.3f} V")
         
-        # Overflow
         if overflow:
             self.overflow_label.setText("YES!")
             self.overflow_label.setStyleSheet("color: red; font-weight: bold;")
@@ -242,46 +438,55 @@ class ADCTab(QWidget):
             self.overflow_label.setText("NO")
             self.overflow_label.setStyleSheet("")
         
-        # Bar graph (shift signed to unsigned for display)
-        bar_val = adc_val + 32768
-        self.adc_bar.setValue(bar_val)
+        self.adc_bar.setValue(adc_val + 32768)
         
-        # Control states (block signals to prevent feedback loops)
         self.output_enable_cb.blockSignals(True)
-        self.output_enable_cb.setChecked(bool(ctrl & 0x01))
+        self.output_enable_cb.setChecked(bool(self.current_ctrl & 0x01))
         self.output_enable_cb.blockSignals(False)
         
         self.clock_source_combo.blockSignals(True)
-        self.clock_source_combo.setCurrentIndex(1 if (ctrl & 0x02) else 0)
+        self.clock_source_combo.setCurrentIndex(1 if (self.current_ctrl & 0x02) else 0)
         self.clock_source_combo.blockSignals(False)
         
         self.prescaler_spin.blockSignals(True)
         self.prescaler_spin.setValue(pre)
         self.prescaler_spin.blockSignals(False)
         
-        # Frequency calculation
         freq_mhz = 100.0 / (2.0 * (pre + 1))
         self.freq_label.setText(f"{freq_mhz:.2f} MHz")
 
 
 # =============================================================================
-# DAC Tab (LTC1666)
+# DAC Tab
 # =============================================================================
 
 class DACTab(QWidget):
-    """Control panel for LTC1666 DAC."""
-    
-    def __init__(self, client: ZynqClient):
+    """Control panel for a DAC with dynamic dropdown selection."""
+    def __init__(self, client: ZynqClient, addrs: list[int]):
         super().__init__()
         self.client = client
+        self.addrs = addrs
+        self.current_addr = addrs[0] if addrs else 0
+        self.current_ctrl = 0
+        self.last_data = {}
         self.init_ui()
     
     def init_ui(self):
         layout = QVBoxLayout(self)
         
-        # --- Output Value Group ---
-        output_group = QGroupBox("DAC Output")
-        output_layout = QGridLayout(output_group)
+        target_group = QGroupBox("Target Device")
+        target_layout = QHBoxLayout(target_group)
+        self.device_combo = QComboBox()
+        for i, addr in enumerate(self.addrs):
+            self.device_combo.addItem(f"DAC {i} (0x{addr:08X})", addr)
+        self.device_combo.currentIndexChanged.connect(self.on_device_changed)
+        target_layout.addWidget(QLabel("Select DAC:"))
+        target_layout.addWidget(self.device_combo)
+        target_layout.addStretch()
+        layout.addWidget(target_group)
+        
+        self.output_group = QGroupBox(f"DAC Output (0x{self.current_addr:08X})")
+        output_layout = QGridLayout(self.output_group)
         
         output_layout.addWidget(QLabel("Value (0-4095):"), 0, 0)
         self.value_spin = QSpinBox()
@@ -299,7 +504,6 @@ class DACTab(QWidget):
         output_layout.addWidget(QLabel("Est. Voltage:"), 2, 0)
         output_layout.addWidget(self.voltage_label, 2, 1)
         
-        # Bar graph
         self.dac_bar = QProgressBar()
         self.dac_bar.setMinimum(0)
         self.dac_bar.setMaximum(4095)
@@ -309,9 +513,8 @@ class DACTab(QWidget):
         output_layout.addWidget(self.dac_bar, 3, 1)
         output_layout.addWidget(QLabel("4V"), 3, 2)
         
-        layout.addWidget(output_group)
+        layout.addWidget(self.output_group)
         
-        # --- Control Group ---
         control_group = QGroupBox("Control")
         control_layout = QGridLayout(control_group)
         
@@ -335,7 +538,6 @@ class DACTab(QWidget):
         
         layout.addWidget(control_group)
         
-        # --- Timing Group ---
         timing_group = QGroupBox("Timing")
         timing_layout = QGridLayout(timing_group)
         
@@ -351,242 +553,99 @@ class DACTab(QWidget):
         
         layout.addWidget(timing_group)
         layout.addStretch()
-    
+
+    def on_device_changed(self, index):
+        self.current_addr = self.device_combo.itemData(index)
+        self.output_group.setTitle(f"DAC Output (0x{self.current_addr:08X})")
+        if self.last_data:
+            self.update_from_data(self.last_data)
+
     def on_value_change(self, value):
         if self.client.connected:
             self.value_slider.blockSignals(True)
             self.value_slider.setValue(value)
             self.value_slider.blockSignals(False)
-            self.client.write_reg("dac", 0, value)
+            self.client.write_reg(self.current_addr, 0, value)
     
     def on_slider_change(self, value):
-        self.value_spin.blockSignals(True)
-        self.value_spin.setValue(value)
-        self.value_spin.blockSignals(False)
         if self.client.connected:
-            self.client.write_reg("dac", 0, value)
-    
+            self.value_spin.blockSignals(True)
+            self.value_spin.setValue(value)
+            self.value_spin.blockSignals(False)
+            self.client.write_reg(self.current_addr, 0, value)
+            
     def on_mode_change(self, index):
         if self.client.connected:
-            ctrl = self._get_current_ctrl()
-            if index == 1:  # Manual
-                ctrl |= 0x01
-            else:  # Passthrough
-                ctrl &= ~0x01
-            self.client.write_reg("dac", 1, ctrl)
-    
+            ctrl = self.current_ctrl
+            if index == 1: ctrl |= 0x01
+            else:          ctrl &= ~0x01
+            self.client.write_reg(self.current_addr, 1, ctrl)
+            self.current_ctrl = ctrl
+            
     def on_enable_change(self, _):
         if self.client.connected:
-            ctrl = self._get_current_ctrl() & 0x09  # Keep mode and latch bits
-            if self.en0_cb.isChecked():
-                ctrl |= 0x02
-            if self.en1_cb.isChecked():
-                ctrl |= 0x04
-            self.client.write_reg("dac", 1, ctrl)
+            ctrl = self.current_ctrl & 0x09
+            if self.en0_cb.isChecked(): ctrl |= 0x02
+            if self.en1_cb.isChecked(): ctrl |= 0x04
+            self.client.write_reg(self.current_addr, 1, ctrl)
+            self.current_ctrl = ctrl
 
     def on_latch_change(self, state):
         if self.client.connected:
-            ctrl = self._get_current_ctrl()
-            if state:
-                ctrl |= 0x08
-            else:
-                ctrl &= ~0x08
-            self.client.write_reg("dac", 1, ctrl)
-    
+            ctrl = self.current_ctrl
+            if state: ctrl |= 0x08
+            else:     ctrl &= ~0x08
+            self.client.write_reg(self.current_addr, 1, ctrl)
+            self.current_ctrl = ctrl
+            
     def on_prescaler(self, value):
         if self.client.connected:
-            self.client.write_reg("dac", 2, value)
-    
-    def _get_current_ctrl(self) -> int:
-        resp = self.client.get_all()
-        if resp and resp.get("status") == "ok":
-            return int(resp["dac"]["ctrl"])
-        return 0
-    
-    def update_from_data(self, dac_data: Dict):
-        """Update UI from polled data."""
-        data = int(dac_data.get("data", 0)) & 0x0FFF
-        ctrl = int(dac_data.get("ctrl", 0))
-        pre = int(dac_data.get("pre", 0))
+            self.client.write_reg(self.current_addr, 2, value)
+            
+    def update_from_data(self, data: Dict):
+        self.last_data = data
+        dac_data = data.get(str(self.current_addr), {})
+        if not dac_data:
+            return
+            
+        val = int(dac_data.get("0", 0)) & 0x0FFF
+        self.current_ctrl = int(dac_data.get("1", 0))
+        pre = int(dac_data.get("2", 0))
         
-        # Update value (block signals to prevent loops)
         self.value_spin.blockSignals(True)
-        self.value_spin.setValue(data)
+        self.value_spin.setValue(val)
         self.value_spin.blockSignals(False)
         
         self.value_slider.blockSignals(True)
-        self.value_slider.setValue(data)
+        self.value_slider.setValue(val)
         self.value_slider.blockSignals(False)
         
-        # Voltage (0-4V scale)
-        voltage = (data / 4095.0) * 4.0
+        voltage = (val / 4095.0) * 4.0
         self.voltage_label.setText(f"{voltage:.3f} V")
+        self.dac_bar.setValue(val)
         
-        # Bar
-        self.dac_bar.setValue(data)
-        
-        # Control bits
         self.mode_combo.blockSignals(True)
-        self.mode_combo.setCurrentIndex(1 if (ctrl & 0x01) else 0)
+        self.mode_combo.setCurrentIndex(1 if (self.current_ctrl & 0x01) else 0)
         self.mode_combo.blockSignals(False)
         
         self.en0_cb.blockSignals(True)
-        self.en0_cb.setChecked(bool(ctrl & 0x02))
+        self.en0_cb.setChecked(bool(self.current_ctrl & 0x02))
         self.en0_cb.blockSignals(False)
         
         self.en1_cb.blockSignals(True)
-        self.en1_cb.setChecked(bool(ctrl & 0x04))
+        self.en1_cb.setChecked(bool(self.current_ctrl & 0x04))
         self.en1_cb.blockSignals(False)
 
         self.latch_oe_cb.blockSignals(True)
-        self.latch_oe_cb.setChecked(bool(ctrl & 0x08))
+        self.latch_oe_cb.setChecked(bool(self.current_ctrl & 0x08))
         self.latch_oe_cb.blockSignals(False)
         
         self.prescaler_spin.blockSignals(True)
         self.prescaler_spin.setValue(pre)
         self.prescaler_spin.blockSignals(False)
         
-        # Frequency
         freq_mhz = 100.0 / (2.0 * (pre + 1))
         self.freq_label.setText(f"{freq_mhz:.2f} MHz")
-
-
-# =============================================================================
-# SPGD Tab
-# =============================================================================
-
-class SPGDTab(QWidget):
-    """Control panel for SPGD controller."""
-    
-    def __init__(self, client: ZynqClient):
-        super().__init__()
-        self.client = client
-        self.init_ui()
-    
-    def init_ui(self):
-        layout = QVBoxLayout(self)
-        
-        # --- Status Group ---
-        status_group = QGroupBox("Status")
-        status_layout = QGridLayout(status_group)
-        
-        self.enable_cb = QCheckBox("Enable SPGD Loop")
-        self.enable_cb.setFont(QFont("", 12, QFont.Weight.Bold))
-        self.enable_cb.stateChanged.connect(self.on_enable_change)
-        status_layout.addWidget(self.enable_cb, 0, 0, 1, 2)
-        
-        self.passthrough_cb = QCheckBox("Passthrough Mode")
-        self.passthrough_cb.stateChanged.connect(self.on_passthrough_change)
-        status_layout.addWidget(self.passthrough_cb, 1, 0, 1, 2)
-        
-        layout.addWidget(status_group)
-        
-        # --- Parameters Group ---
-        params_group = QGroupBox("SPGD Parameters")
-        params_layout = QGridLayout(params_group)
-        
-        params_layout.addWidget(QLabel("Settle Cycles:"), 0, 0)
-        self.settle_spin = QSpinBox()
-        self.settle_spin.setRange(0, 65535)
-        self.settle_spin.setSingleStep(10)
-        self.settle_spin.valueChanged.connect(self.on_params_change)
-        params_layout.addWidget(self.settle_spin, 0, 1)
-        
-        params_layout.addWidget(QLabel("Perturbation Amplitude:"), 1, 0)
-        self.perturb_spin = QSpinBox()
-        self.perturb_spin.setRange(0, 65535)
-        self.perturb_spin.setSingleStep(10)
-        self.perturb_spin.valueChanged.connect(self.on_params_change)
-        params_layout.addWidget(self.perturb_spin, 1, 1)
-        
-        params_layout.addWidget(QLabel("Gamma (Learning Rate):"), 2, 0)
-        self.gamma_spin = QSpinBox()
-        self.gamma_spin.setRange(0, 2147483647)
-        self.gamma_spin.setSingleStep(100)
-        self.gamma_spin.valueChanged.connect(self.on_gamma_change)
-        params_layout.addWidget(self.gamma_spin, 2, 1)
-        
-        layout.addWidget(params_group)
-        
-        # --- Reset Group ---
-        reset_group = QGroupBox("DAC Reset")
-        reset_layout = QHBoxLayout(reset_group)
-        
-        self.reset_btn = QPushButton("Manual Reset (Mid-Scale)")
-        self.reset_btn.clicked.connect(self.on_reset)
-        reset_layout.addWidget(self.reset_btn)
-        
-        layout.addWidget(reset_group)
-        layout.addStretch()
-    
-    def on_enable_change(self, state):
-        if self.client.connected:
-            ctrl = self._get_current_ctrl()
-            if state:
-                ctrl |= 0x01
-            else:
-                ctrl &= ~0x01
-            self.client.write_reg("spgd", 0, ctrl)
-    
-    def on_passthrough_change(self, state):
-        if self.client.connected:
-            ctrl = self._get_current_ctrl()
-            if state:
-                ctrl |= 0x02
-            else:
-                ctrl &= ~0x02
-            self.client.write_reg("spgd", 0, ctrl)
-    
-    def on_params_change(self, _):
-        if self.client.connected:
-            settle = self.settle_spin.value()
-            perturb = self.perturb_spin.value()
-            config = (perturb << 16) | settle
-            self.client.write_reg("spgd", 1, config)
-    
-    def on_gamma_change(self, value):
-        if self.client.connected:
-            self.client.write_reg("spgd", 2, value)
-    
-    def on_reset(self):
-        if self.client.connected:
-            self.client.pulse_bit("spgd", 2)
-    
-    def _get_current_ctrl(self) -> int:
-        resp = self.client.get_all()
-        if resp and resp.get("status") == "ok":
-            return int(resp["spgd"]["ctrl"])
-        return 0
-    
-    def update_from_data(self, spgd_data: Dict):
-        """Update UI from polled data."""
-        ctrl = int(spgd_data.get("ctrl", 0))
-        config = int(spgd_data.get("config", 0))
-        gamma = int(spgd_data.get("gamma", 0))
-        
-        settle = config & 0xFFFF
-        perturb = (config >> 16) & 0xFFFF
-        
-        # Update controls (block signals)
-        self.enable_cb.blockSignals(True)
-        self.enable_cb.setChecked(bool(ctrl & 0x01))
-        self.enable_cb.blockSignals(False)
-        
-        self.passthrough_cb.blockSignals(True)
-        self.passthrough_cb.setChecked(bool(ctrl & 0x02))
-        self.passthrough_cb.blockSignals(False)
-        
-        self.settle_spin.blockSignals(True)
-        self.settle_spin.setValue(settle)
-        self.settle_spin.blockSignals(False)
-        
-        self.perturb_spin.blockSignals(True)
-        self.perturb_spin.setValue(perturb)
-        self.perturb_spin.blockSignals(False)
-        
-        self.gamma_spin.blockSignals(True)
-        self.gamma_spin.setValue(gamma)
-        self.gamma_spin.blockSignals(False)
 
 
 # =============================================================================
@@ -594,22 +653,18 @@ class SPGDTab(QWidget):
 # =============================================================================
 
 class MainWindow(QMainWindow):
-    """Main application window with tabs for each peripheral."""
-    
     def __init__(self, host: str = "localhost", port: int = 5000):
         super().__init__()
         self.client = ZynqClient(host, port)
         
-        self.setWindowTitle("Zynq AXI Controller")
-        self.setMinimumSize(500, 600)
+        self.setWindowTitle("Zynq Dynamic AXI Controller")
+        self.setMinimumSize(600, 700)
         
         self.init_ui()
         
-        # Polling timer
         self.poll_timer = QTimer()
         self.poll_timer.timeout.connect(self.poll_data)
         
-        # Try initial connection
         self.reconnect()
     
     def init_ui(self):
@@ -617,9 +672,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
         
-        # --- Connection Bar ---
         conn_layout = QHBoxLayout()
-        
         conn_layout.addWidget(QLabel("Host:"))
         self.host_edit = QLineEdit(self.client.host)
         self.host_edit.setFixedWidth(150)
@@ -637,27 +690,23 @@ class MainWindow(QMainWindow):
         self.status_label = QLabel("Disconnected")
         self.status_label.setStyleSheet("color: red;")
         conn_layout.addWidget(self.status_label)
-        
         conn_layout.addStretch()
         layout.addLayout(conn_layout)
         
-        # --- Tabs ---
         self.tabs = QTabWidget()
         
-        self.adc_tab = ADCTab(self.client)
-        self.tabs.addTab(self.adc_tab, "ADC (LTC2203)")
+        self.master_tab = MasterTab(self.client, ADC_ADDRS, DAC_ADDRS, SPGD_ADDR)
+        self.tabs.addTab(self.master_tab, "Master / SPGD")
         
-        self.dac_tab = DACTab(self.client)
-        self.tabs.addTab(self.dac_tab, "DAC (LTC1666)")
-        
-        self.spgd_tab = SPGDTab(self.client)
-        self.tabs.addTab(self.spgd_tab, "SPGD")
-        
+        self.adc_tab = ADCTab(self.client, ADC_ADDRS)
+        self.tabs.addTab(self.adc_tab, "ADC Control")
+            
+        self.dac_tab = DACTab(self.client, DAC_ADDRS)
+        self.tabs.addTab(self.dac_tab, "DAC Control")
+            
         layout.addWidget(self.tabs)
         
-        # --- Bottom Bar ---
         bottom_layout = QHBoxLayout()
-        
         bottom_layout.addWidget(QLabel("Poll Rate:"))
         self.poll_rate_spin = QSpinBox()
         self.poll_rate_spin.setRange(1, 100)
@@ -665,16 +714,12 @@ class MainWindow(QMainWindow):
         self.poll_rate_spin.setSuffix(" Hz")
         self.poll_rate_spin.valueChanged.connect(self.on_poll_rate_change)
         bottom_layout.addWidget(self.poll_rate_spin)
-        
         bottom_layout.addStretch()
         layout.addLayout(bottom_layout)
     
     def reconnect(self):
-        """Attempt to connect/reconnect to the server."""
         self.poll_timer.stop()
         self.client.disconnect()
-        
-        # Update host/port from UI
         self.client.host = self.host_edit.text()
         try:
             self.client.port = int(self.port_edit.text())
@@ -685,8 +730,6 @@ class MainWindow(QMainWindow):
             self.status_label.setText("Connected")
             self.status_label.setStyleSheet("color: green;")
             self.connect_btn.setText("Reconnect")
-            
-            # Start polling
             interval = 1000 // self.poll_rate_spin.value()
             self.poll_timer.start(interval)
         else:
@@ -694,45 +737,34 @@ class MainWindow(QMainWindow):
             self.status_label.setStyleSheet("color: red;")
     
     def on_poll_rate_change(self, value):
-        """Update polling interval."""
         if self.poll_timer.isActive():
             interval = 1000 // value
             self.poll_timer.setInterval(interval)
     
     def poll_data(self):
-        """Poll all data from server and update UI."""
-        resp = self.client.get_all()
+        all_addrs = ADC_ADDRS + DAC_ADDRS + [SPGD_ADDR]
+        resp = self.client.read_all(all_addrs)
         
         if resp is None or resp.get("status") != "ok":
-            # Connection lost
             self.poll_timer.stop()
             self.status_label.setText("Disconnected")
             self.status_label.setStyleSheet("color: red;")
             self.client.connected = False
             return
         
-        # Update each tab
-        if "adc" in resp:
-            self.adc_tab.update_from_data(resp["adc"])
-        if "dac" in resp:
-            self.dac_tab.update_from_data(resp["dac"])
-        if "spgd" in resp:
-            self.spgd_tab.update_from_data(resp["spgd"])
+        data = resp.get("data", {})
+        
+        self.master_tab.update_from_data(data)
+        self.adc_tab.update_from_data(data)
+        self.dac_tab.update_from_data(data)
     
     def closeEvent(self, event):
-        """Clean up on close."""
         self.poll_timer.stop()
         self.client.disconnect()
         event.accept()
 
-
-# =============================================================================
-# Entry Point
-# =============================================================================
-
 def main():
-    # Parse command line args
-    host = "192.168.1.10"  # Default Zynq IP - change as needed
+    host = "192.168.1.10"
     port = 5000
     
     if len(sys.argv) > 1:
@@ -750,7 +782,6 @@ def main():
     window.show()
     
     sys.exit(app.exec())
-
 
 if __name__ == "__main__":
     main()
