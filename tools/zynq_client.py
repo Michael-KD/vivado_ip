@@ -24,6 +24,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QFont, QPalette, QColor
 
+VERSION = "2.0"
+
 # =============================================================================
 # Hardware Addresses Configuration
 # =============================================================================
@@ -32,7 +34,7 @@ from PyQt6.QtGui import QFont, QPalette, QColor
 ADC_ADDRS = [0x80030000]
 
 # 8 DACs
-DAC_ADDRS = [0x80040000 + i * 0x10000 for i in range(8)]
+DAC_ADDRS = [0x80040000]
 
 # 1 SPGD
 SPGD_ADDR = 0x80000000
@@ -715,6 +717,9 @@ class MainWindow(QMainWindow):
         self.poll_rate_spin.valueChanged.connect(self.on_poll_rate_change)
         bottom_layout.addWidget(self.poll_rate_spin)
         bottom_layout.addStretch()
+        version_label = QLabel(f"Version {VERSION}")
+        version_label.setStyleSheet("color: gray;")
+        bottom_layout.addWidget(version_label)
         layout.addLayout(bottom_layout)
     
     def reconnect(self):
@@ -764,7 +769,7 @@ class MainWindow(QMainWindow):
         event.accept()
 
 def main():
-    host = "192.168.1.10"
+    host = "192.168.1.85"
     port = 5000
     
     if len(sys.argv) > 1:

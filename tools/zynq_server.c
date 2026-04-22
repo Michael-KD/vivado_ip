@@ -35,6 +35,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <errno.h>
+#include <setjmp.h>
 #include <json-c/json.h>
 
 #define MAP_SIZE    4096UL
@@ -43,6 +44,8 @@
 #define DEFAULT_PORT 5000
 #define MAX_MSG_LEN  65536 // Increased buffer length to handle read_all arrays
 
+#define SERVER_VERSION "2.0"
+
 // ============================================================================
 // Global State
 // ============================================================================
@@ -50,6 +53,8 @@
 static volatile int running = 1;
 static int server_fd = -1;
 static int mem_fd = -1;
+static volatile sig_atomic_t mmio_guard_active = 0;
+static sigjmp_buf mmio_jmp_env;
 
 struct mapped_region {
     uint32_t page_addr;
@@ -58,6 +63,14 @@ struct mapped_region {
 };
 
 static struct mapped_region *mapped_regions = NULL;
+
+static void sigbus_handler(int sig) {
+    (void)sig;
+    if (mmio_guard_active) {
+        siglongjmp(mmio_jmp_env, 1);
+    }
+    running = 0;
+}
 
 // ============================================================================
 // Hardware Access
@@ -114,6 +127,34 @@ static volatile uint32_t *map_address(uint32_t target_addr) {
     mapped_regions = region;
 
     return (volatile uint32_t *)(mapped + (target_addr & MAP_MASK));
+}
+
+static int safe_read_reg(volatile uint32_t *regs, int reg, uint32_t *value) {
+    if (!regs || !value || reg < 0) return -1;
+
+    mmio_guard_active = 1;
+    if (sigsetjmp(mmio_jmp_env, 1) != 0) {
+        mmio_guard_active = 0;
+        return -1;
+    }
+
+    *value = regs[reg];
+    mmio_guard_active = 0;
+    return 0;
+}
+
+static int safe_write_reg(volatile uint32_t *regs, int reg, uint32_t value) {
+    if (!regs || reg < 0) return -1;
+
+    mmio_guard_active = 1;
+    if (sigsetjmp(mmio_jmp_env, 1) != 0) {
+        mmio_guard_active = 0;
+        return -1;
+    }
+
+    regs[reg] = value;
+    mmio_guard_active = 0;
+    return 0;
 }
 
 // ============================================================================
@@ -173,10 +214,17 @@ static char *handle_read_all(json_object *req) {
         uint32_t addr = (uint32_t)json_object_get_int64(addr_item);
         volatile uint32_t *regs = map_address(addr);
         if (regs) {
+            uint32_t r0, r1, r2;
+            if (safe_read_reg(regs, 0, &r0) != 0 ||
+                safe_read_reg(regs, 1, &r1) != 0 ||
+                safe_read_reg(regs, 2, &r2) != 0) {
+                continue;
+            }
+
             json_object *dev_data = json_object_new_object();
-            json_object_object_add(dev_data, "0", json_object_new_int64(regs[0]));
-            json_object_object_add(dev_data, "1", json_object_new_int64(regs[1]));
-            json_object_object_add(dev_data, "2", json_object_new_int64(regs[2]));
+            json_object_object_add(dev_data, "0", json_object_new_int64(r0));
+            json_object_object_add(dev_data, "1", json_object_new_int64(r1));
+            json_object_object_add(dev_data, "2", json_object_new_int64(r2));
             
             char addr_str[32];
             snprintf(addr_str, sizeof(addr_str), "%u", addr);
@@ -217,7 +265,12 @@ static char *handle_read(json_object *req) {
         return make_error_response("Failed to map address");
     }
 
-    return make_read_response(regs[reg]);
+    uint32_t value = 0;
+    if (safe_read_reg(regs, reg, &value) != 0) {
+        return make_error_response("Bus fault while reading register");
+    }
+
+    return make_read_response(value);
 }
 
 static char *handle_write(json_object *req) {
@@ -250,7 +303,10 @@ static char *handle_write(json_object *req) {
         return make_error_response("Failed to map address");
     }
 
-    regs[reg] = value;
+    if (safe_write_reg(regs, reg, value) != 0) {
+        return make_error_response("Bus fault while writing register");
+    }
+
     return make_ok_response();
 }
 
@@ -284,10 +340,18 @@ static char *handle_pulse(json_object *req) {
     // If pulse is generally for reg 0 (which is also DAC value, SPGD ctrl, ADC value=read only).
     // Note: old code did regs[0] = orig | mask;
     uint32_t mask = 1U << bit;
-    uint32_t orig = regs[0];
-    regs[0] = orig | mask;
+    uint32_t orig = 0;
+
+    if (safe_read_reg(regs, 0, &orig) != 0) {
+        return make_error_response("Bus fault while reading control register");
+    }
+    if (safe_write_reg(regs, 0, orig | mask) != 0) {
+        return make_error_response("Bus fault while pulsing control register");
+    }
     usleep(100);
-    regs[0] = orig & ~mask;
+    if (safe_write_reg(regs, 0, orig & ~mask) != 0) {
+        return make_error_response("Bus fault while restoring control register");
+    }
 
     return make_ok_response();
 }
@@ -382,6 +446,20 @@ static void signal_handler(int sig) {
     if (server_fd >= 0) close(server_fd);
 }
 
+static void install_signal_handlers(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = signal_handler;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
+
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = sigbus_handler;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGBUS, &sa, NULL);
+}
+
 static int start_server(int port) {
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
@@ -444,9 +522,9 @@ int main(int argc, char *argv[]) {
     }
 
     printf("=== Zynq AXI Peripheral Server (Dynamic) ===\n\n");
+    printf("Version: %s\n\n", SERVER_VERSION);
 
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
+    install_signal_handlers();
 
     if (init_hardware() < 0) return 1;
 
