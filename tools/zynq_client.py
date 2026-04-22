@@ -469,6 +469,14 @@ class DACTab(QWidget):
         self.current_addr = addrs[0] if addrs else 0
         self.current_ctrl = 0
         self.last_data = {}
+        self.ramp_enabled = {addr: False for addr in addrs}
+        self.ramp_values = {addr: 0 for addr in addrs}
+        self.ramp_speed = {addr: 400 for addr in addrs}  # steps per second
+        self.ramp_interval_ms = 20
+        self.ramp_timer = QTimer(self)
+        self.ramp_timer.setInterval(self.ramp_interval_ms)
+        self.ramp_timer.timeout.connect(self.on_ramp_tick)
+        self.ramp_timer.start()
         self.init_ui()
     
     def init_ui(self):
@@ -535,6 +543,18 @@ class DACTab(QWidget):
         self.latch_oe_cb = QCheckBox("Latch Output Enable")
         self.latch_oe_cb.stateChanged.connect(self.on_latch_change)
         control_layout.addWidget(self.latch_oe_cb, 3, 0, 1, 2)
+
+        self.ramp_enable_cb = QCheckBox("Enable Ramp (0 -> 4095)")
+        self.ramp_enable_cb.stateChanged.connect(self.on_ramp_enable)
+        control_layout.addWidget(self.ramp_enable_cb, 4, 0, 1, 2)
+
+        control_layout.addWidget(QLabel("Ramp Speed:"), 5, 0)
+        self.ramp_speed_spin = QSpinBox()
+        self.ramp_speed_spin.setRange(1, 20000)
+        self.ramp_speed_spin.setSuffix(" steps/s")
+        self.ramp_speed_spin.setValue(self.ramp_speed.get(self.current_addr, 400))
+        self.ramp_speed_spin.valueChanged.connect(self.on_ramp_speed_change)
+        control_layout.addWidget(self.ramp_speed_spin, 5, 1)
         
         layout.addWidget(control_group)
         
@@ -557,6 +577,15 @@ class DACTab(QWidget):
     def on_device_changed(self, index):
         self.current_addr = self.device_combo.itemData(index)
         self.output_group.setTitle(f"DAC Output (0x{self.current_addr:08X})")
+
+        self.ramp_enable_cb.blockSignals(True)
+        self.ramp_enable_cb.setChecked(self.ramp_enabled.get(self.current_addr, False))
+        self.ramp_enable_cb.blockSignals(False)
+
+        self.ramp_speed_spin.blockSignals(True)
+        self.ramp_speed_spin.setValue(self.ramp_speed.get(self.current_addr, 400))
+        self.ramp_speed_spin.blockSignals(False)
+
         if self.last_data:
             self.update_from_data(self.last_data)
 
@@ -601,9 +630,51 @@ class DACTab(QWidget):
     def on_prescaler(self, value):
         if self.client.connected:
             self.client.write_reg(self.current_addr, 2, value)
+
+    def on_ramp_enable(self, state):
+        enabled = bool(state)
+        self.ramp_enabled[self.current_addr] = enabled
+        if enabled:
+            self.ramp_values[self.current_addr] = self.value_spin.value()
+
+    def on_ramp_speed_change(self, value):
+        self.ramp_speed[self.current_addr] = value
+
+    def on_ramp_tick(self):
+        if not self.client.connected:
+            return
+
+        for addr in self.addrs:
+            if not self.ramp_enabled.get(addr, False):
+                continue
+
+            speed = self.ramp_speed.get(addr, 400)
+            step = max(1, (speed * self.ramp_interval_ms) // 1000)
+            next_val = (self.ramp_values.get(addr, 0) + step) % 4096
+            self.ramp_values[addr] = next_val
+            self.client.write_reg(addr, 0, next_val)
+
+            if addr == self.current_addr:
+                self.value_spin.blockSignals(True)
+                self.value_spin.setValue(next_val)
+                self.value_spin.blockSignals(False)
+
+                self.value_slider.blockSignals(True)
+                self.value_slider.setValue(next_val)
+                self.value_slider.blockSignals(False)
+
+                voltage = (next_val / 4095.0) * 4.0
+                self.voltage_label.setText(f"{voltage:.3f} V")
+                self.dac_bar.setValue(next_val)
             
     def update_from_data(self, data: Dict):
         self.last_data = data
+
+        for addr in self.addrs:
+            dev_data = data.get(str(addr), {})
+            if dev_data:
+                self.ramp_values[addr] = int(dev_data.get("0", 0)) & 0x0FFF
+
         dac_data = data.get(str(self.current_addr), {})
         if not dac_data:
             return
@@ -639,6 +710,14 @@ class DACTab(QWidget):
         self.latch_oe_cb.blockSignals(True)
         self.latch_oe_cb.setChecked(bool(self.current_ctrl & 0x08))
         self.latch_oe_cb.blockSignals(False)
+
+        self.ramp_enable_cb.blockSignals(True)
+        self.ramp_enable_cb.setChecked(self.ramp_enabled.get(self.current_addr, False))
+        self.ramp_enable_cb.blockSignals(False)
+
+        self.ramp_speed_spin.blockSignals(True)
+        self.ramp_speed_spin.setValue(self.ramp_speed.get(self.current_addr, 400))
+        self.ramp_speed_spin.blockSignals(False)
         
         self.prescaler_spin.blockSignals(True)
         self.prescaler_spin.setValue(pre)
