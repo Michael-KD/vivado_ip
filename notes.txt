@@ -60,3 +60,10 @@ boot
 Alinx to Trenz:
 
 primary sd/sdio in the petalinux config was psu_sd_0, changed to psu_sd_1 
+
+
+Trenz:
+
+
+petalinux-config --get-hw-description ../../vivado/trenz_custom/ ***.xsa
+petalinux-package --boot   --fsbl ~/TE0803-StarterKit-vivado_2021.2-build_18/StarterKit/prebuilt/software/2cg_2gb/fsbl.elf   --fpga images/linux/system.bit   --u-boot images/linux/u-boot.elf   --pmufw images/linux/pmufw.elf   --atf images/linux/bl31.elf   --force

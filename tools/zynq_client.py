@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QFont, QPalette, QColor
 
-VERSION = "2.0"
+VERSION = "2.1"
 
 # =============================================================================
 # Hardware Addresses Configuration
@@ -34,7 +34,7 @@ VERSION = "2.0"
 ADC_ADDRS = [0x80030000]
 
 # 8 DACs
-DAC_ADDRS = [0x80040000]
+DAC_ADDRS = [0x80100000, 0x80110000, 0x80120000, 0x80130000, 0x80140000, 0x80150000, 0x80160000, 0x80170000]
 
 # 1 SPGD
 SPGD_ADDR = 0x80000000
@@ -368,22 +368,16 @@ class ADCTab(QWidget):
         self.output_enable_cb = QCheckBox("Output Enable")
         self.output_enable_cb.stateChanged.connect(self.on_output_enable)
         control_layout.addWidget(self.output_enable_cb, 0, 0)
-        
-        control_layout.addWidget(QLabel("Clock Source:"), 1, 0)
-        self.clock_source_combo = QComboBox()
-        self.clock_source_combo.addItems(["External", "Internal"])
-        self.clock_source_combo.currentIndexChanged.connect(self.on_clock_source)
-        control_layout.addWidget(self.clock_source_combo, 1, 1)
-        
-        control_layout.addWidget(QLabel("Prescaler:"), 2, 0)
+
+        control_layout.addWidget(QLabel("Prescaler:"), 1, 0)
         self.prescaler_spin = QSpinBox()
         self.prescaler_spin.setRange(0, 65535)
         self.prescaler_spin.valueChanged.connect(self.on_prescaler)
-        control_layout.addWidget(self.prescaler_spin, 2, 1)
+        control_layout.addWidget(self.prescaler_spin, 1, 1)
         
         self.freq_label = QLabel("-- MHz")
-        control_layout.addWidget(QLabel("Sample Rate:"), 3, 0)
-        control_layout.addWidget(self.freq_label, 3, 1)
+        control_layout.addWidget(QLabel("Sample Rate:"), 2, 0)
+        control_layout.addWidget(self.freq_label, 2, 1)
         
         layout.addWidget(control_group)
         layout.addStretch()
@@ -399,14 +393,6 @@ class ADCTab(QWidget):
             ctrl = self.current_ctrl
             if state: ctrl |= 0x01
             else:     ctrl &= ~0x01
-            self.client.write_reg(self.current_addr, 1, ctrl)
-            self.current_ctrl = ctrl
-            
-    def on_clock_source(self, index):
-        if self.client.connected:
-            ctrl = self.current_ctrl
-            if index == 1: ctrl |= 0x02
-            else:          ctrl &= ~0x02
             self.client.write_reg(self.current_addr, 1, ctrl)
             self.current_ctrl = ctrl
             
@@ -446,10 +432,6 @@ class ADCTab(QWidget):
         self.output_enable_cb.setChecked(bool(self.current_ctrl & 0x01))
         self.output_enable_cb.blockSignals(False)
         
-        self.clock_source_combo.blockSignals(True)
-        self.clock_source_combo.setCurrentIndex(1 if (self.current_ctrl & 0x02) else 0)
-        self.clock_source_combo.blockSignals(False)
-        
         self.prescaler_spin.blockSignals(True)
         self.prescaler_spin.setValue(pre)
         self.prescaler_spin.blockSignals(False)
@@ -468,8 +450,11 @@ class DACTab(QWidget):
         super().__init__()
         self.client = client
         self.addrs = addrs
+        self.global_addr = addrs[0] if addrs else 0
         self.current_addr = addrs[0] if addrs else 0
         self.current_ctrl = 0
+        self.global_ctrl = 0
+        self.global_pre = 0
         self.last_data = {}
         self.ramp_enabled = {addr: False for addr in addrs}
         self.ramp_values = {addr: 0 for addr in addrs}
@@ -525,55 +510,54 @@ class DACTab(QWidget):
         
         layout.addWidget(self.output_group)
         
-        control_group = QGroupBox("Control")
+        control_group = QGroupBox("Per-Device Controls")
         control_layout = QGridLayout(control_group)
-        
+
         control_layout.addWidget(QLabel("Mode:"), 0, 0)
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["Passthrough", "Manual (Register)"])
         self.mode_combo.currentIndexChanged.connect(self.on_mode_change)
         control_layout.addWidget(self.mode_combo, 0, 1)
-        
-        self.en0_cb = QCheckBox("DAC 0 Clock Enable")
-        self.en0_cb.stateChanged.connect(self.on_enable_change)
-        control_layout.addWidget(self.en0_cb, 1, 0, 1, 2)
-        
-        self.en1_cb = QCheckBox("DAC 1 Clock Enable")
-        self.en1_cb.stateChanged.connect(self.on_enable_change)
-        control_layout.addWidget(self.en1_cb, 2, 0, 1, 2)
-
-        self.latch_oe_cb = QCheckBox("Latch Output Enable")
-        self.latch_oe_cb.stateChanged.connect(self.on_latch_change)
-        control_layout.addWidget(self.latch_oe_cb, 3, 0, 1, 2)
 
         self.ramp_enable_cb = QCheckBox("Enable Ramp (0 -> 4095)")
         self.ramp_enable_cb.stateChanged.connect(self.on_ramp_enable)
-        control_layout.addWidget(self.ramp_enable_cb, 4, 0, 1, 2)
+        control_layout.addWidget(self.ramp_enable_cb, 1, 0, 1, 2)
 
-        control_layout.addWidget(QLabel("Ramp Speed:"), 5, 0)
+        control_layout.addWidget(QLabel("Ramp Speed:"), 2, 0)
         self.ramp_speed_spin = QSpinBox()
         self.ramp_speed_spin.setRange(1, 20000)
         self.ramp_speed_spin.setSuffix(" steps/s")
         self.ramp_speed_spin.setValue(self.ramp_speed.get(self.current_addr, 400))
         self.ramp_speed_spin.valueChanged.connect(self.on_ramp_speed_change)
-        control_layout.addWidget(self.ramp_speed_spin, 5, 1)
+        control_layout.addWidget(self.ramp_speed_spin, 2, 1)
         
         layout.addWidget(control_group)
-        
-        timing_group = QGroupBox("Timing")
-        timing_layout = QGridLayout(timing_group)
-        
-        timing_layout.addWidget(QLabel("Prescaler:"), 0, 0)
+
+        global_group = QGroupBox("Global Controls")
+        global_layout = QGridLayout(global_group)
+
+        global_note = QLabel(f"Global signals use DAC0 (0x{self.global_addr:08X})")
+        global_layout.addWidget(global_note, 0, 0, 1, 2)
+
+        self.en0_cb = QCheckBox("DAC 0 Clock Enable")
+        self.en0_cb.stateChanged.connect(self.on_global_clock_change)
+        global_layout.addWidget(self.en0_cb, 1, 0, 1, 2)
+
+        self.latch_oe_cb = QCheckBox("Latch Output Enable")
+        self.latch_oe_cb.stateChanged.connect(self.on_global_latch_change)
+        global_layout.addWidget(self.latch_oe_cb, 2, 0, 1, 2)
+
+        global_layout.addWidget(QLabel("Global Prescaler:"), 3, 0)
         self.prescaler_spin = QSpinBox()
         self.prescaler_spin.setRange(0, 65535)
-        self.prescaler_spin.valueChanged.connect(self.on_prescaler)
-        timing_layout.addWidget(self.prescaler_spin, 0, 1)
-        
+        self.prescaler_spin.valueChanged.connect(self.on_global_prescaler)
+        global_layout.addWidget(self.prescaler_spin, 3, 1)
+
         self.freq_label = QLabel("-- MHz")
-        timing_layout.addWidget(QLabel("Clock Freq:"), 1, 0)
-        timing_layout.addWidget(self.freq_label, 1, 1)
-        
-        layout.addWidget(timing_group)
+        global_layout.addWidget(QLabel("Global Clock Freq:"), 4, 0)
+        global_layout.addWidget(self.freq_label, 4, 1)
+
+        layout.addWidget(global_group)
         layout.addStretch()
 
     def on_device_changed(self, index):
@@ -607,31 +591,36 @@ class DACTab(QWidget):
             
     def on_mode_change(self, index):
         if self.client.connected:
-            ctrl = self.current_ctrl
+            ctrl = self.current_ctrl & ~0x01
+            if self.current_addr == self.global_addr:
+                ctrl = (self.global_ctrl & ~0x01) | (self.current_ctrl & 0x01)
             if index == 1: ctrl |= 0x01
             else:          ctrl &= ~0x01
             self.client.write_reg(self.current_addr, 1, ctrl)
             self.current_ctrl = ctrl
-            
-    def on_enable_change(self, _):
-        if self.client.connected:
-            ctrl = self.current_ctrl & 0x09
-            if self.en0_cb.isChecked(): ctrl |= 0x02
-            if self.en1_cb.isChecked(): ctrl |= 0x04
-            self.client.write_reg(self.current_addr, 1, ctrl)
-            self.current_ctrl = ctrl
+            if self.current_addr == self.global_addr:
+                self.global_ctrl = (self.global_ctrl & ~0x01) | (ctrl & 0x01)
 
-    def on_latch_change(self, state):
+    def on_global_clock_change(self, state):
         if self.client.connected:
-            ctrl = self.current_ctrl
+            ctrl = self.global_ctrl
+            if state: ctrl |= 0x02
+            else:     ctrl &= ~0x02
+            self.client.write_reg(self.global_addr, 1, ctrl)
+            self.global_ctrl = ctrl
+
+    def on_global_latch_change(self, state):
+        if self.client.connected:
+            ctrl = self.global_ctrl
             if state: ctrl |= 0x08
             else:     ctrl &= ~0x08
-            self.client.write_reg(self.current_addr, 1, ctrl)
-            self.current_ctrl = ctrl
-            
-    def on_prescaler(self, value):
+            self.client.write_reg(self.global_addr, 1, ctrl)
+            self.global_ctrl = ctrl
+
+    def on_global_prescaler(self, value):
         if self.client.connected:
-            self.client.write_reg(self.current_addr, 2, value)
+            self.client.write_reg(self.global_addr, 2, value)
+            self.global_pre = value
 
     def on_ramp_enable(self, state):
         enabled = bool(state)
@@ -680,10 +669,14 @@ class DACTab(QWidget):
         dac_data = data.get(str(self.current_addr), {})
         if not dac_data:
             return
+
+        global_data = data.get(str(self.global_addr), {})
+        if global_data:
+            self.global_ctrl = int(global_data.get("1", 0))
+            self.global_pre = int(global_data.get("2", 0))
             
         val = int(dac_data.get("0", 0)) & 0x0FFF
         self.current_ctrl = int(dac_data.get("1", 0))
-        pre = int(dac_data.get("2", 0))
         
         self.value_spin.blockSignals(True)
         self.value_spin.setValue(val)
@@ -702,15 +695,11 @@ class DACTab(QWidget):
         self.mode_combo.blockSignals(False)
         
         self.en0_cb.blockSignals(True)
-        self.en0_cb.setChecked(bool(self.current_ctrl & 0x02))
+        self.en0_cb.setChecked(bool(self.global_ctrl & 0x02))
         self.en0_cb.blockSignals(False)
-        
-        self.en1_cb.blockSignals(True)
-        self.en1_cb.setChecked(bool(self.current_ctrl & 0x04))
-        self.en1_cb.blockSignals(False)
 
         self.latch_oe_cb.blockSignals(True)
-        self.latch_oe_cb.setChecked(bool(self.current_ctrl & 0x08))
+        self.latch_oe_cb.setChecked(bool(self.global_ctrl & 0x08))
         self.latch_oe_cb.blockSignals(False)
 
         self.ramp_enable_cb.blockSignals(True)
@@ -722,10 +711,10 @@ class DACTab(QWidget):
         self.ramp_speed_spin.blockSignals(False)
         
         self.prescaler_spin.blockSignals(True)
-        self.prescaler_spin.setValue(pre)
+        self.prescaler_spin.setValue(self.global_pre)
         self.prescaler_spin.blockSignals(False)
         
-        freq_mhz = 100.0 / (2.0 * (pre + 1))
+        freq_mhz = 100.0 / (2.0 * (self.global_pre + 1))
         self.freq_label.setText(f"{freq_mhz:.2f} MHz")
 
 
