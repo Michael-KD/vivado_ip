@@ -118,6 +118,8 @@
 	reg [C_S_AXI_DATA_WIDTH-1:0]	 reg_data_out;
 	integer	 byte_index;
 	reg	 aw_en;
+	reg [11:0] ramp_data;
+	reg sample_tick;
 
 	// I/O Connections assignments
 
@@ -375,7 +377,7 @@
 	begin
 	      // Address decoding for reading registers
 	      case ( axi_araddr[ADDR_LSB+OPT_MEM_ADDR_BITS:ADDR_LSB] )
-			2'h0   : reg_data_out <= (slv_reg1[0]) ? slv_reg0 : {16'b0, data_in};
+			2'h0   : reg_data_out <= (slv_reg1[0]) ? ((slv_reg1[4]) ? {20'b0, ramp_data} : slv_reg0) : {16'b0, data_in};
 	        2'h1   : reg_data_out <= slv_reg1;
 	        2'h2   : reg_data_out <= slv_reg2;
 	        2'h3   : reg_data_out <= slv_reg3;
@@ -413,22 +415,44 @@
     reg [31:0] clk_div_counter;
     reg        dac_base_clk; // The toggling signal
     
-    always @(posedge S_AXI_ACLK) begin
+	always @(posedge S_AXI_ACLK) begin
         if (S_AXI_ARESETN == 1'b0) begin
             clk_div_counter <= 0;
             dac_base_clk    <= 0;
+			sample_tick     <= 1'b0;
         end 
         else begin
+			sample_tick <= 1'b0;
             // Check if counter has reached the target value in slv_reg2
             if (clk_div_counter >= slv_reg2) begin
                 clk_div_counter <= 0;
                 dac_base_clk    <= ~dac_base_clk; // Toggle (0->1, 1->0)
+				sample_tick     <= 1'b1;
             end 
             else begin
                 clk_div_counter <= clk_div_counter + 1;
             end
         end
     end
+
+	// =========================================================================
+	// 2a. Optional Hardware Ramp Generator
+	// =========================================================================
+	// slv_reg1[4] = enable hardware ramp in manual mode.
+	// Ramp steps once per sample_tick and wraps naturally from 4095 -> 0.
+	wire mode_manual = slv_reg1[0];
+	wire ramp_enable = slv_reg1[4];
+
+	always @(posedge S_AXI_ACLK) begin
+		if (S_AXI_ARESETN == 1'b0) begin
+			ramp_data <= 12'd0;
+		end else if (!mode_manual || !ramp_enable) begin
+			// Track manual register so enabling ramp starts from current value.
+			ramp_data <= slv_reg0[11:0];
+		end else if (sample_tick) begin
+			ramp_data <= ramp_data + 12'd1;
+		end
+	end
 
     // =========================================================================
     // 2. Clock Output using ODDRE1 (UltraScale+)
@@ -467,14 +491,14 @@
     );
 
     // =========================================================================
-    // 3. Data Source Selection (The Mux)
+	// 3. Data Source Selection (The Mux)
     // =========================================================================
     // slv_reg1[0] == 0: PASSTHROUGH (Hardware Source from ADC/Math)
-    // slv_reg1[0] == 1: MANUAL (Software Source from slv_reg0)
+	// slv_reg1[0] == 1: MANUAL (Software Source from slv_reg0 or hardware ramp)
+	// slv_reg1[4] == 1: Enable hardware ramp while in manual mode
     // Note: data_in is already in S_AXI_ACLK domain, no CDC needed
-    
-    wire mode_manual = slv_reg1[0];
-    assign dac_data = (mode_manual) ? slv_reg0[11:0] : data_in;
+
+	assign dac_data = (mode_manual) ? (ramp_enable ? ramp_data : slv_reg0[11:0]) : data_in;
 	assign latch_oe = slv_reg1[3];
 
 

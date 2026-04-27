@@ -144,6 +144,7 @@ class MasterTab(QWidget):
         self.start_sys_btn = QPushButton("Start System")
         self.start_sys_btn.clicked.connect(self.on_start_sys)
         self.start_sys_btn.setFont(QFont("", 14, QFont.Weight.Bold))
+        self.start_sys_btn.setToolTip("Placeholder startup action for future bring-up sequencing.")
         sys_layout.addWidget(self.start_sys_btn)
         layout.addWidget(sys_group)
 
@@ -152,30 +153,42 @@ class MasterTab(QWidget):
         spgd_layout = QGridLayout(spgd_group)
         self.spgd_enable_cb = QCheckBox("Enable SPGD Loop")
         self.spgd_enable_cb.stateChanged.connect(self.on_spgd_enable)
+        self.spgd_enable_cb.setToolTip("Control bit 0: enable/disable SPGD feedback loop.")
         self.spgd_passthrough_cb = QCheckBox("Passthrough Mode")
         self.spgd_passthrough_cb.stateChanged.connect(self.on_spgd_passthrough)
+        self.spgd_passthrough_cb.setToolTip("Control bit 1: bypass SPGD update and use passthrough DAC source.")
         spgd_layout.addWidget(self.spgd_enable_cb, 0, 0)
         spgd_layout.addWidget(self.spgd_passthrough_cb, 0, 1)
 
         self.spgd_settle_spin = QSpinBox()
         self.spgd_settle_spin.setRange(0, 65535)
         self.spgd_settle_spin.valueChanged.connect(self.on_spgd_params)
+        self.spgd_settle_spin.setToolTip("Settle wait in SPGD FSM clock cycles for both +du and -du measurements.")
         self.spgd_perturb_spin = QSpinBox()
         self.spgd_perturb_spin.setRange(0, 65535)
         self.spgd_perturb_spin.valueChanged.connect(self.on_spgd_params)
+        self.spgd_perturb_spin.setToolTip("Perturbation magnitude du in DAC counts applied per channel.")
         self.spgd_gamma_spin = QSpinBox()
         self.spgd_gamma_spin.setRange(0, 2147483647)
         self.spgd_gamma_spin.valueChanged.connect(self.on_spgd_gamma)
+        self.spgd_gamma_spin.setToolTip("Learning rate gamma register. Datapath uses fixed-point scaling (product bits [31:16]).")
         
-        spgd_layout.addWidget(QLabel("Settle:"), 1, 0)
+        settle_label = QLabel("Settle:")
+        settle_label.setToolTip("Settling delay after each perturbation, in SPGD clock cycles.")
+        spgd_layout.addWidget(settle_label, 1, 0)
         spgd_layout.addWidget(self.spgd_settle_spin, 1, 1)
-        spgd_layout.addWidget(QLabel("Perturb:"), 2, 0)
+        perturb_label = QLabel("Perturb:")
+        perturb_label.setToolTip("Unsigned perturbation amplitude du, in DAC counts.")
+        spgd_layout.addWidget(perturb_label, 2, 0)
         spgd_layout.addWidget(self.spgd_perturb_spin, 2, 1)
-        spgd_layout.addWidget(QLabel("Gamma:"), 3, 0)
+        gamma_label = QLabel("Gamma:")
+        gamma_label.setToolTip("Signed learning-rate parameter used in update term gamma * deltaJ.")
+        spgd_layout.addWidget(gamma_label, 3, 0)
         spgd_layout.addWidget(self.spgd_gamma_spin, 3, 1)
         
         self.spgd_reset_btn = QPushButton("Pulse Manual Reset")
         self.spgd_reset_btn.clicked.connect(self.on_spgd_reset)
+        self.spgd_reset_btn.setToolTip("Pulse control bit 2 for one-shot SPGD soft reset.")
         spgd_layout.addWidget(self.spgd_reset_btn, 4, 0, 1, 2)
         layout.addWidget(spgd_group)
         
@@ -186,12 +199,16 @@ class MasterTab(QWidget):
         self.master_dac_slider = QSlider(Qt.Orientation.Horizontal)
         self.master_dac_slider.setRange(0, 4095)
         self.master_dac_slider.valueChanged.connect(self.on_master_dac_slider)
+        self.master_dac_slider.setToolTip("Broadcast manual DAC value to all DAC addresses.")
         
         self.master_dac_spin = QSpinBox()
         self.master_dac_spin.setRange(0, 4095)
         self.master_dac_spin.valueChanged.connect(self.on_master_dac_spin)
+        self.master_dac_spin.setToolTip("Broadcast manual DAC code (0..4095) to all DACs.")
         
-        dac_layout.addWidget(QLabel("Set Value (Broadcast):"), 0, 0)
+        broadcast_label = QLabel("Set Value (Broadcast):")
+        broadcast_label.setToolTip("Writes REG0 for all DAC devices in the configured list.")
+        dac_layout.addWidget(broadcast_label, 0, 0)
         dac_layout.addWidget(self.master_dac_spin, 0, 1)
         dac_layout.addWidget(self.master_dac_slider, 1, 0, 1, 2)
         
@@ -201,6 +218,7 @@ class MasterTab(QWidget):
         adc_group = QGroupBox("ADC Status Overview")
         adc_layout = QVBoxLayout(adc_group)
         self.adc_info_label = QLabel("Waiting for data...")
+        self.adc_info_label.setToolTip("Live decoded ADC readings from all configured ADC addresses.")
         adc_layout.addWidget(self.adc_info_label)
         layout.addWidget(adc_group)
         
@@ -325,7 +343,10 @@ class ADCTab(QWidget):
         for i, addr in enumerate(self.addrs):
             self.device_combo.addItem(f"ADC {i} (0x{addr:08X})", addr)
         self.device_combo.currentIndexChanged.connect(self.on_device_changed)
-        target_layout.addWidget(QLabel("Select ADC:"))
+        self.device_combo.setToolTip("Select which ADC base address this tab controls.")
+        select_adc_label = QLabel("Select ADC:")
+        select_adc_label.setToolTip("Active ADC target for writes and displayed reads.")
+        target_layout.addWidget(select_adc_label)
         target_layout.addWidget(self.device_combo)
         target_layout.addStretch()
         layout.addWidget(target_group)
@@ -336,18 +357,27 @@ class ADCTab(QWidget):
         self.adc_value_label = QLabel("0")
         self.adc_value_label.setFont(QFont("Courier", 24, QFont.Weight.Bold))
         self.adc_value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        reading_layout.addWidget(QLabel("Raw Value:"), 0, 0)
+        self.adc_value_label.setToolTip("Signed ADC code after two's complement conversion.")
+        raw_label = QLabel("Raw Value:")
+        raw_label.setToolTip("Current ADC sample represented as signed counts.")
+        reading_layout.addWidget(raw_label, 0, 0)
         reading_layout.addWidget(self.adc_value_label, 0, 1)
         
         self.voltage_label = QLabel("0.000 V")
         self.voltage_label.setFont(QFont("Courier", 24, QFont.Weight.Bold))
         self.voltage_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        reading_layout.addWidget(QLabel("Voltage:"), 1, 0)
+        self.voltage_label.setToolTip("Estimated voltage from signed ADC code using +/-10V full scale.")
+        voltage_text_label = QLabel("Voltage:")
+        voltage_text_label.setToolTip("Estimated ADC input voltage.")
+        reading_layout.addWidget(voltage_text_label, 1, 0)
         reading_layout.addWidget(self.voltage_label, 1, 1)
         
         self.overflow_label = QLabel("NO")
         self.overflow_label.setFont(QFont("Courier", 16))
-        reading_layout.addWidget(QLabel("Overflow:"), 2, 0)
+        self.overflow_label.setToolTip("ADC overflow flag from status bit in REG0.")
+        overflow_text_label = QLabel("Overflow:")
+        overflow_text_label.setToolTip("Indicates ADC saturation/overflow condition.")
+        reading_layout.addWidget(overflow_text_label, 2, 0)
         reading_layout.addWidget(self.overflow_label, 2, 1)
         
         self.adc_bar = QProgressBar()
@@ -356,9 +386,14 @@ class ADCTab(QWidget):
         self.adc_bar.setValue(32768)
         self.adc_bar.setTextVisible(False)
         self.adc_bar.setFixedHeight(30)
-        reading_layout.addWidget(QLabel("-10V"), 3, 0)
+        self.adc_bar.setToolTip("Visualized ADC range from -10V to +10V.")
+        minus10_label = QLabel("-10V")
+        minus10_label.setToolTip("ADC negative full-scale reference.")
+        reading_layout.addWidget(minus10_label, 3, 0)
         reading_layout.addWidget(self.adc_bar, 3, 1)
-        reading_layout.addWidget(QLabel("+10V"), 3, 2)
+        plus10_label = QLabel("+10V")
+        plus10_label.setToolTip("ADC positive full-scale reference.")
+        reading_layout.addWidget(plus10_label, 3, 2)
         
         layout.addWidget(self.reading_group)
         
@@ -367,16 +402,23 @@ class ADCTab(QWidget):
         
         self.output_enable_cb = QCheckBox("Output Enable")
         self.output_enable_cb.stateChanged.connect(self.on_output_enable)
+        self.output_enable_cb.setToolTip("Control bit 0: enable ADC interface output path.")
         control_layout.addWidget(self.output_enable_cb, 0, 0)
 
-        control_layout.addWidget(QLabel("Prescaler:"), 1, 0)
+        adc_prescaler_label = QLabel("Prescaler:")
+        adc_prescaler_label.setToolTip("ADC encode-clock divider register value.")
+        control_layout.addWidget(adc_prescaler_label, 1, 0)
         self.prescaler_spin = QSpinBox()
         self.prescaler_spin.setRange(0, 65535)
         self.prescaler_spin.valueChanged.connect(self.on_prescaler)
+        self.prescaler_spin.setToolTip("Clock divider used by ADC clock generation.")
         control_layout.addWidget(self.prescaler_spin, 1, 1)
         
         self.freq_label = QLabel("-- MHz")
-        control_layout.addWidget(QLabel("Sample Rate:"), 2, 0)
+        self.freq_label.setToolTip("Computed from prescaler: 100 MHz / (2*(pre+1)).")
+        sample_rate_label = QLabel("Sample Rate:")
+        sample_rate_label.setToolTip("Estimated ADC sampling frequency from divider setting.")
+        control_layout.addWidget(sample_rate_label, 2, 0)
         control_layout.addWidget(self.freq_label, 2, 1)
         
         layout.addWidget(control_group)
@@ -446,6 +488,11 @@ class ADCTab(QWidget):
 
 class DACTab(QWidget):
     """Control panel for a DAC with dynamic dropdown selection."""
+    MASK_MODE = 0x01
+    MASK_EN0 = 0x02
+    MASK_LATCH = 0x08
+    MASK_HW_RAMP = 0x10
+
     def __init__(self, client: ZynqClient, addrs: list[int]):
         super().__init__()
         self.client = client
@@ -457,13 +504,6 @@ class DACTab(QWidget):
         self.global_pre = 0
         self.last_data = {}
         self.ramp_enabled = {addr: False for addr in addrs}
-        self.ramp_values = {addr: 0 for addr in addrs}
-        self.ramp_speed = {addr: 400 for addr in addrs}  # steps per second
-        self.ramp_interval_ms = 20
-        self.ramp_timer = QTimer(self)
-        self.ramp_timer.setInterval(self.ramp_interval_ms)
-        self.ramp_timer.timeout.connect(self.on_ramp_tick)
-        self.ramp_timer.start()
         self.init_ui()
     
     def init_ui(self):
@@ -475,7 +515,10 @@ class DACTab(QWidget):
         for i, addr in enumerate(self.addrs):
             self.device_combo.addItem(f"DAC {i} (0x{addr:08X})", addr)
         self.device_combo.currentIndexChanged.connect(self.on_device_changed)
-        target_layout.addWidget(QLabel("Select DAC:"))
+        self.device_combo.setToolTip("Select which DAC base address this tab controls.")
+        select_dac_label = QLabel("Select DAC:")
+        select_dac_label.setToolTip("Active DAC target for writes and displayed reads.")
+        target_layout.addWidget(select_dac_label)
         target_layout.addWidget(self.device_combo)
         target_layout.addStretch()
         layout.addWidget(target_group)
@@ -483,20 +526,27 @@ class DACTab(QWidget):
         self.output_group = QGroupBox(f"DAC Output (0x{self.current_addr:08X})")
         output_layout = QGridLayout(self.output_group)
         
-        output_layout.addWidget(QLabel("Value (0-4095):"), 0, 0)
+        dac_value_label = QLabel("Value (0-4095):")
+        dac_value_label.setToolTip("Manual DAC input code. 0 = 0V, 4095 = full scale.")
+        output_layout.addWidget(dac_value_label, 0, 0)
         self.value_spin = QSpinBox()
         self.value_spin.setRange(0, 4095)
         self.value_spin.valueChanged.connect(self.on_value_change)
+        self.value_spin.setToolTip("Manual DAC code written to REG0.")
         output_layout.addWidget(self.value_spin, 0, 1)
         
         self.value_slider = QSlider(Qt.Orientation.Horizontal)
         self.value_slider.setRange(0, 4095)
         self.value_slider.valueChanged.connect(self.on_slider_change)
+        self.value_slider.setToolTip("Manual DAC code slider (mirrors Value spinbox).")
         output_layout.addWidget(self.value_slider, 1, 0, 1, 3)
         
         self.voltage_label = QLabel("0.000 V")
         self.voltage_label.setFont(QFont("Courier", 18, QFont.Weight.Bold))
-        output_layout.addWidget(QLabel("Est. Voltage:"), 2, 0)
+        self.voltage_label.setToolTip("Estimated output voltage from DAC code using 0..4V scale.")
+        dac_voltage_text_label = QLabel("Est. Voltage:")
+        dac_voltage_text_label.setToolTip("Estimated analog output voltage.")
+        output_layout.addWidget(dac_voltage_text_label, 2, 0)
         output_layout.addWidget(self.voltage_label, 2, 1)
         
         self.dac_bar = QProgressBar()
@@ -504,32 +554,38 @@ class DACTab(QWidget):
         self.dac_bar.setMaximum(4095)
         self.dac_bar.setTextVisible(False)
         self.dac_bar.setFixedHeight(25)
-        output_layout.addWidget(QLabel("0V"), 3, 0)
+        self.dac_bar.setToolTip("Visualized DAC code from 0 to full scale.")
+        dac_0v_label = QLabel("0V")
+        dac_0v_label.setToolTip("DAC minimum output reference.")
+        output_layout.addWidget(dac_0v_label, 3, 0)
         output_layout.addWidget(self.dac_bar, 3, 1)
-        output_layout.addWidget(QLabel("4V"), 3, 2)
+        dac_4v_label = QLabel("4V")
+        dac_4v_label.setToolTip("DAC maximum output reference.")
+        output_layout.addWidget(dac_4v_label, 3, 2)
         
         layout.addWidget(self.output_group)
         
         control_group = QGroupBox("Per-Device Controls")
         control_layout = QGridLayout(control_group)
 
-        control_layout.addWidget(QLabel("Mode:"), 0, 0)
+        dac_mode_label = QLabel("Mode:")
+        dac_mode_label.setToolTip("Select passthrough source or manual REG0 source.")
+        control_layout.addWidget(dac_mode_label, 0, 0)
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["Passthrough", "Manual (Register)"])
         self.mode_combo.currentIndexChanged.connect(self.on_mode_change)
+        self.mode_combo.setToolTip("Control bit 0: 0=passthrough, 1=manual register source.")
         control_layout.addWidget(self.mode_combo, 0, 1)
 
-        self.ramp_enable_cb = QCheckBox("Enable Ramp (0 -> 4095)")
+        self.ramp_enable_cb = QCheckBox("Enable Hardware Ramp (0 -> 4095)")
         self.ramp_enable_cb.stateChanged.connect(self.on_ramp_enable)
+        self.ramp_enable_cb.setToolTip("Control bit 4: enable on-FPGA DAC ramp generator in manual mode.")
         control_layout.addWidget(self.ramp_enable_cb, 1, 0, 1, 2)
 
-        control_layout.addWidget(QLabel("Ramp Speed:"), 2, 0)
-        self.ramp_speed_spin = QSpinBox()
-        self.ramp_speed_spin.setRange(1, 20000)
-        self.ramp_speed_spin.setSuffix(" steps/s")
-        self.ramp_speed_spin.setValue(self.ramp_speed.get(self.current_addr, 400))
-        self.ramp_speed_spin.valueChanged.connect(self.on_ramp_speed_change)
-        control_layout.addWidget(self.ramp_speed_spin, 2, 1)
+        self.ramp_note_label = QLabel("Ramp rate follows prescaler/sample clock")
+        self.ramp_note_label.setStyleSheet("color: gray;")
+        self.ramp_note_label.setToolTip("Ramp increments one code per DAC sample tick from prescaler.")
+        control_layout.addWidget(self.ramp_note_label, 2, 0, 1, 2)
         
         layout.addWidget(control_group)
 
@@ -537,24 +593,33 @@ class DACTab(QWidget):
         global_layout = QGridLayout(global_group)
 
         global_note = QLabel(f"Global signals use DAC0 (0x{self.global_addr:08X})")
+        global_note.setToolTip("Global clock/latch controls are shared and mapped through DAC0 control register.")
         global_layout.addWidget(global_note, 0, 0, 1, 2)
 
         self.en0_cb = QCheckBox("DAC 0 Clock Enable")
         self.en0_cb.stateChanged.connect(self.on_global_clock_change)
+        self.en0_cb.setToolTip("Control bit 1: enable DAC clock output clk_0.")
         global_layout.addWidget(self.en0_cb, 1, 0, 1, 2)
 
         self.latch_oe_cb = QCheckBox("Latch Output Enable")
         self.latch_oe_cb.stateChanged.connect(self.on_global_latch_change)
+        self.latch_oe_cb.setToolTip("Control bit 3: latch/output-enable control for DAC interface.")
         global_layout.addWidget(self.latch_oe_cb, 2, 0, 1, 2)
 
-        global_layout.addWidget(QLabel("Global Prescaler:"), 3, 0)
+        global_prescaler_label = QLabel("Global Prescaler:")
+        global_prescaler_label.setToolTip("Clock divider register for DAC sample clock generation.")
+        global_layout.addWidget(global_prescaler_label, 3, 0)
         self.prescaler_spin = QSpinBox()
         self.prescaler_spin.setRange(0, 65535)
         self.prescaler_spin.valueChanged.connect(self.on_global_prescaler)
+        self.prescaler_spin.setToolTip("Prescaler used for DAC clock/ramp tick: 100 MHz / (2*(pre+1)).")
         global_layout.addWidget(self.prescaler_spin, 3, 1)
 
         self.freq_label = QLabel("-- MHz")
-        global_layout.addWidget(QLabel("Global Clock Freq:"), 4, 0)
+        self.freq_label.setToolTip("Computed DAC sample clock from prescaler.")
+        global_clock_label = QLabel("Global Clock Freq:")
+        global_clock_label.setToolTip("Estimated DAC clock frequency.")
+        global_layout.addWidget(global_clock_label, 4, 0)
         global_layout.addWidget(self.freq_label, 4, 1)
 
         layout.addWidget(global_group)
@@ -567,10 +632,6 @@ class DACTab(QWidget):
         self.ramp_enable_cb.blockSignals(True)
         self.ramp_enable_cb.setChecked(self.ramp_enabled.get(self.current_addr, False))
         self.ramp_enable_cb.blockSignals(False)
-
-        self.ramp_speed_spin.blockSignals(True)
-        self.ramp_speed_spin.setValue(self.ramp_speed.get(self.current_addr, 400))
-        self.ramp_speed_spin.blockSignals(False)
 
         if self.last_data:
             self.update_from_data(self.last_data)
@@ -591,29 +652,33 @@ class DACTab(QWidget):
             
     def on_mode_change(self, index):
         if self.client.connected:
-            ctrl = self.current_ctrl & ~0x01
-            if self.current_addr == self.global_addr:
-                ctrl = (self.global_ctrl & ~0x01) | (self.current_ctrl & 0x01)
-            if index == 1: ctrl |= 0x01
-            else:          ctrl &= ~0x01
+            ctrl = self.current_ctrl & ~self.MASK_MODE
+            if index == 1:
+                ctrl |= self.MASK_MODE
+            else:
+                ctrl &= ~self.MASK_MODE
             self.client.write_reg(self.current_addr, 1, ctrl)
             self.current_ctrl = ctrl
             if self.current_addr == self.global_addr:
-                self.global_ctrl = (self.global_ctrl & ~0x01) | (ctrl & 0x01)
+                self.global_ctrl = ctrl
 
     def on_global_clock_change(self, state):
         if self.client.connected:
             ctrl = self.global_ctrl
-            if state: ctrl |= 0x02
-            else:     ctrl &= ~0x02
+            if state:
+                ctrl |= self.MASK_EN0
+            else:
+                ctrl &= ~self.MASK_EN0
             self.client.write_reg(self.global_addr, 1, ctrl)
             self.global_ctrl = ctrl
 
     def on_global_latch_change(self, state):
         if self.client.connected:
             ctrl = self.global_ctrl
-            if state: ctrl |= 0x08
-            else:     ctrl &= ~0x08
+            if state:
+                ctrl |= self.MASK_LATCH
+            else:
+                ctrl &= ~self.MASK_LATCH
             self.client.write_reg(self.global_addr, 1, ctrl)
             self.global_ctrl = ctrl
 
@@ -623,40 +688,25 @@ class DACTab(QWidget):
             self.global_pre = value
 
     def on_ramp_enable(self, state):
-        enabled = bool(state)
-        self.ramp_enabled[self.current_addr] = enabled
-        if enabled:
-            self.ramp_values[self.current_addr] = self.value_spin.value()
-
-    def on_ramp_speed_change(self, value):
-        self.ramp_speed[self.current_addr] = value
-
-    def on_ramp_tick(self):
         if not self.client.connected:
             return
 
-        for addr in self.addrs:
-            if not self.ramp_enabled.get(addr, False):
-                continue
+        ctrl = self.current_ctrl
+        if state:
+            ctrl |= self.MASK_MODE
+            ctrl |= self.MASK_HW_RAMP
+        else:
+            ctrl &= ~self.MASK_HW_RAMP
 
-            speed = self.ramp_speed.get(addr, 400)
-            step = max(1, (speed * self.ramp_interval_ms) // 1000)
-            next_val = (self.ramp_values.get(addr, 0) + step) % 4096
-            self.ramp_values[addr] = next_val
-            self.client.write_reg(addr, 0, next_val)
+        self.client.write_reg(self.current_addr, 1, ctrl)
+        self.current_ctrl = ctrl
+        if self.current_addr == self.global_addr:
+            self.global_ctrl = ctrl
 
-            if addr == self.current_addr:
-                self.value_spin.blockSignals(True)
-                self.value_spin.setValue(next_val)
-                self.value_spin.blockSignals(False)
-
-                self.value_slider.blockSignals(True)
-                self.value_slider.setValue(next_val)
-                self.value_slider.blockSignals(False)
-
-                voltage = (next_val / 4095.0) * 4.0
-                self.voltage_label.setText(f"{voltage:.3f} V")
-                self.dac_bar.setValue(next_val)
+        self.mode_combo.blockSignals(True)
+        self.mode_combo.setCurrentIndex(1 if (ctrl & self.MASK_MODE) else 0)
+        self.mode_combo.blockSignals(False)
+        self.ramp_enabled[self.current_addr] = bool(ctrl & self.MASK_HW_RAMP)
             
     def update_from_data(self, data: Dict):
         self.last_data = data
@@ -664,7 +714,8 @@ class DACTab(QWidget):
         for addr in self.addrs:
             dev_data = data.get(str(addr), {})
             if dev_data:
-                self.ramp_values[addr] = int(dev_data.get("0", 0)) & 0x0FFF
+                ctrl = int(dev_data.get("1", 0))
+                self.ramp_enabled[addr] = bool(ctrl & self.MASK_HW_RAMP)
 
         dac_data = data.get(str(self.current_addr), {})
         if not dac_data:
@@ -703,12 +754,8 @@ class DACTab(QWidget):
         self.latch_oe_cb.blockSignals(False)
 
         self.ramp_enable_cb.blockSignals(True)
-        self.ramp_enable_cb.setChecked(self.ramp_enabled.get(self.current_addr, False))
+        self.ramp_enable_cb.setChecked(bool(self.current_ctrl & self.MASK_HW_RAMP))
         self.ramp_enable_cb.blockSignals(False)
-
-        self.ramp_speed_spin.blockSignals(True)
-        self.ramp_speed_spin.setValue(self.ramp_speed.get(self.current_addr, 400))
-        self.ramp_speed_spin.blockSignals(False)
         
         self.prescaler_spin.blockSignals(True)
         self.prescaler_spin.setValue(self.global_pre)
@@ -743,22 +790,30 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(central)
         
         conn_layout = QHBoxLayout()
-        conn_layout.addWidget(QLabel("Host:"))
+        host_label = QLabel("Host:")
+        host_label.setToolTip("IP address or hostname of zynq_server.")
+        conn_layout.addWidget(host_label)
         self.host_edit = QLineEdit(self.client.host)
         self.host_edit.setFixedWidth(150)
+        self.host_edit.setToolTip("Target server host. Example: 192.168.1.85")
         conn_layout.addWidget(self.host_edit)
         
-        conn_layout.addWidget(QLabel("Port:"))
+        port_label = QLabel("Port:")
+        port_label.setToolTip("TCP port used by zynq_server (default 5000).")
+        conn_layout.addWidget(port_label)
         self.port_edit = QLineEdit(str(self.client.port))
         self.port_edit.setFixedWidth(60)
+        self.port_edit.setToolTip("Server TCP port number.")
         conn_layout.addWidget(self.port_edit)
         
         self.connect_btn = QPushButton("Connect")
         self.connect_btn.clicked.connect(self.reconnect)
+        self.connect_btn.setToolTip("Connect/reconnect to server and start polling.")
         conn_layout.addWidget(self.connect_btn)
         
         self.status_label = QLabel("Disconnected")
         self.status_label.setStyleSheet("color: red;")
+        self.status_label.setToolTip("Current client connection state.")
         conn_layout.addWidget(self.status_label)
         conn_layout.addStretch()
         layout.addLayout(conn_layout)
@@ -777,12 +832,15 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.tabs)
         
         bottom_layout = QHBoxLayout()
-        bottom_layout.addWidget(QLabel("Poll Rate:"))
+        poll_rate_label = QLabel("Poll Rate:")
+        poll_rate_label.setToolTip("How often the GUI reads all registers from the server.")
+        bottom_layout.addWidget(poll_rate_label)
         self.poll_rate_spin = QSpinBox()
         self.poll_rate_spin.setRange(1, 100)
         self.poll_rate_spin.setValue(10)
         self.poll_rate_spin.setSuffix(" Hz")
         self.poll_rate_spin.valueChanged.connect(self.on_poll_rate_change)
+        self.poll_rate_spin.setToolTip("Readback polling frequency in Hz. Higher values increase network traffic.")
         bottom_layout.addWidget(self.poll_rate_spin)
         bottom_layout.addStretch()
         version_label = QLabel(f"Version {VERSION}")
