@@ -63,6 +63,7 @@ int main() {
     mvprintw(6, 0,  "=== OUTPUT DATA ===");
     mvprintw(7, 2,  "MANUAL VALUE:    [      ] (0-4095)");
     mvprintw(8, 2,  "EST. VOLTAGE:    [      ] (0-4V Scale)");
+    mvprintw(9, 2,  "REGS:            [ R0=0x00000000 R1=0x00000000 R2=0x00000000 ]");
     
     // Bar Graph
     mvprintw(10, 2, "0V [                                                           ] +4V");
@@ -121,6 +122,11 @@ int main() {
                 mvprintw(7, 20, "%04d", ramp_val);
                 double voltage = ((double)ramp_val / 4095.0) * 4.0;
                 mvprintw(8, 20, "%5.2f V", voltage);
+                // Also show raw register values for diagnostics
+                uint32_t r0 = regs[REG_DATA];
+                uint32_t r1 = regs[REG_CTRL];
+                uint32_t r2 = regs[REG_PRE];
+                mvprintw(9, 2,  "REGS: R0=0x%08X R1=0x%08X R2=0x%08X", r0, r1, r2);
                 refresh();
             }
 
@@ -195,6 +201,9 @@ int main() {
         // 4. Ramp status (off in normal mode)
         mvprintw(12, 20, "OFF  ");
         mvprintw(12, 34, "          ");
+
+        // Show raw registers for easy debugging
+        mvprintw(9, 2,  "REGS: R0=0x%08X R1=0x%08X R2=0x%08X", raw_r0, raw_r1, raw_r2);
 
         // 5. Timing
         mvprintw(15, 20, "%-5u", raw_r2);
