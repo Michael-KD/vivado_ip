@@ -15,16 +15,19 @@ import socket
 import json
 from typing import Optional, Dict, Any
 
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QLabel, QSpinBox, QDoubleSpinBox, QPushButton, QCheckBox,
-    QComboBox, QProgressBar, QGroupBox, QStatusBar, QLineEdit, QMessageBox,
-    QSlider, QFrame
+    QComboBox, QProgressBar, QGroupBox, QLineEdit, QMessageBox,
+    QSlider
 )
 from PyQt6.QtCore import QTimer, Qt
-from PyQt6.QtGui import QFont, QPalette, QColor
+from PyQt6.QtGui import QFont
 
-VERSION = "2.1"
+VERSION = "2.2"
 
 # =============================================================================
 # Hardware Addresses Configuration
@@ -231,16 +234,20 @@ class MasterTab(QWidget):
     def on_spgd_enable(self, state):
         if self.client.connected:
             ctrl = self.spgd_ctrl
-            if state: ctrl |= 0x01
-            else:     ctrl &= ~0x01
+            if state:
+                ctrl |= 0x01
+            else:
+                ctrl &= ~0x01
             self.client.write_reg(self.spgd_addr, 0, ctrl)
             self.spgd_ctrl = ctrl
             
     def on_spgd_passthrough(self, state):
         if self.client.connected:
             ctrl = self.spgd_ctrl
-            if state: ctrl |= 0x02
-            else:     ctrl &= ~0x02
+            if state:
+                ctrl |= 0x02
+            else:
+                ctrl &= ~0x02
             self.client.write_reg(self.spgd_addr, 0, ctrl)
             self.spgd_ctrl = ctrl
 
@@ -433,8 +440,10 @@ class ADCTab(QWidget):
     def on_output_enable(self, state):
         if self.client.connected:
             ctrl = self.current_ctrl
-            if state: ctrl |= 0x01
-            else:     ctrl &= ~0x01
+            if state:
+                ctrl |= 0x01
+            else:
+                ctrl &= ~0x01
             self.client.write_reg(self.current_addr, 1, ctrl)
             self.current_ctrl = ctrl
             
@@ -766,6 +775,418 @@ class DACTab(QWidget):
 
 
 # =============================================================================
+# Calibration / Test Tab
+# =============================================================================
+
+class CalibrationTab(QWidget):
+    """Ramp a DAC while recording the connected ADC response in real time."""
+
+    MASK_MODE = 0x01
+    MASK_EN0 = 0x02
+    MASK_LATCH = 0x08
+    MASK_HW_RAMP = 0x10
+
+    def __init__(
+        self,
+        client: ZynqClient,
+        adc_addrs: list[int],
+        dac_addrs: list[int],
+        spgd_addr: int,
+        pause_polling=None,
+        resume_polling=None,
+        refresh_now=None,
+    ):
+        super().__init__()
+        self.client = client
+        self.adc_addrs = adc_addrs
+        self.dac_addrs = dac_addrs
+        self.spgd_addr = spgd_addr
+        self.pause_polling = pause_polling
+        self.resume_polling = resume_polling
+        self.refresh_now = refresh_now
+
+        self.is_running = False
+        self.samples = []
+        self.saved_state: Dict[str, Dict[str, int]] = {}
+
+        self.capture_timer = QTimer(self)
+        self.capture_timer.timeout.connect(self.capture_sample)
+
+        self.figure = Figure(figsize=(5, 4), dpi=100)
+        self.canvas = FigureCanvas(self.figure)
+        self.axes = self.figure.add_subplot(111)
+        self.axes.set_xlabel("DAC Code")
+        self.axes.set_ylabel("ADC Voltage (V)")
+        self.axes.set_xlim(0, 4095)
+        self.axes.set_ylim(-10.5, 10.5)
+        self.axes.grid(True, alpha=0.25)
+        self.axes.axhline(0.0, color="#888888", linewidth=0.8)
+        (self.plot_line,) = self.axes.plot([], [], color="#1f77b4", linewidth=1.5)
+
+        self.init_ui()
+        self.update_target_labels()
+        self.update_rate_labels()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+
+        setup_group = QGroupBox("Calibration Setup")
+        setup_layout = QGridLayout(setup_group)
+
+        dac_label = QLabel("DAC Number:")
+        dac_label.setToolTip("Select the DAC output being looped back into the ADC.")
+        setup_layout.addWidget(dac_label, 0, 0)
+        self.dac_index_spin = QSpinBox()
+        self.dac_index_spin.setRange(0, max(0, len(self.dac_addrs) - 1))
+        self.dac_index_spin.valueChanged.connect(self.on_target_changed)
+        setup_layout.addWidget(self.dac_index_spin, 0, 1)
+        self.dac_addr_label = QLabel("n/a")
+        self.dac_addr_label.setToolTip("Resolved DAC base address for the selected number.")
+        setup_layout.addWidget(self.dac_addr_label, 0, 2)
+
+        adc_label = QLabel("ADC Number:")
+        adc_label.setToolTip("Select the ADC channel connected to the test DAC.")
+        setup_layout.addWidget(adc_label, 1, 0)
+        self.adc_index_spin = QSpinBox()
+        self.adc_index_spin.setRange(0, max(0, len(self.adc_addrs) - 1))
+        self.adc_index_spin.valueChanged.connect(self.on_target_changed)
+        setup_layout.addWidget(self.adc_index_spin, 1, 1)
+        self.adc_addr_label = QLabel("n/a")
+        self.adc_addr_label.setToolTip("Resolved ADC base address for the selected number.")
+        setup_layout.addWidget(self.adc_addr_label, 1, 2)
+
+        ramp_rate_label = QLabel("Ramp Rate (Hz):")
+        ramp_rate_label.setToolTip("Desired DAC ramp clock. The FPGA ramp advances one code per clock tick.")
+        setup_layout.addWidget(ramp_rate_label, 2, 0)
+        self.ramp_rate_spin = QDoubleSpinBox()
+        self.ramp_rate_spin.setDecimals(3)
+        self.ramp_rate_spin.setRange(0.001, 50000000.0)
+        self.ramp_rate_spin.setValue(1000.0)
+        self.ramp_rate_spin.valueChanged.connect(self.update_rate_labels)
+        setup_layout.addWidget(self.ramp_rate_spin, 2, 1)
+        self.actual_rate_label = QLabel("-- Hz")
+        self.actual_rate_label.setToolTip("Actual clock rate after prescaler quantization.")
+        setup_layout.addWidget(self.actual_rate_label, 2, 2)
+
+        capture_rate_label = QLabel("Plot Rate (Hz):")
+        capture_rate_label.setToolTip("How often the GUI samples the ADC and redraws the plot.")
+        setup_layout.addWidget(capture_rate_label, 3, 0)
+        self.capture_rate_spin = QSpinBox()
+        self.capture_rate_spin.setRange(1, 1000)
+        self.capture_rate_spin.setValue(50)
+        self.capture_rate_spin.valueChanged.connect(self.on_capture_rate_changed)
+        setup_layout.addWidget(self.capture_rate_spin, 3, 1)
+        self.sweep_time_label = QLabel("-- s")
+        self.sweep_time_label.setToolTip("Estimated 0-to-full-scale sweep duration at the selected ramp rate.")
+        setup_layout.addWidget(self.sweep_time_label, 3, 2)
+
+        self.force_passthrough_cb = QCheckBox("Force SPGD passthrough while running")
+        self.force_passthrough_cb.setChecked(True)
+        self.force_passthrough_cb.setToolTip("Sets SPGD control bit 1 during the test so the DAC path is bypassed.")
+        setup_layout.addWidget(self.force_passthrough_cb, 4, 0, 1, 3)
+
+        self.auto_stop_cb = QCheckBox("Auto-stop when ramp reaches full scale")
+        self.auto_stop_cb.setChecked(True)
+        self.auto_stop_cb.setToolTip("Stops capture after the ramp reaches the top of its range.")
+        setup_layout.addWidget(self.auto_stop_cb, 5, 0, 1, 3)
+
+        button_row = QHBoxLayout()
+        self.start_btn = QPushButton("Start Calibration")
+        self.start_btn.clicked.connect(self.start_test)
+        button_row.addWidget(self.start_btn)
+        self.stop_btn = QPushButton("Stop")
+        self.stop_btn.clicked.connect(self.stop_test)
+        self.stop_btn.setEnabled(False)
+        button_row.addWidget(self.stop_btn)
+        self.clear_btn = QPushButton("Clear Plot")
+        self.clear_btn.clicked.connect(self.clear_plot)
+        button_row.addWidget(self.clear_btn)
+        button_row.addStretch()
+        setup_layout.addLayout(button_row, 6, 0, 1, 3)
+
+        self.status_label = QLabel("Idle")
+        self.status_label.setStyleSheet("color: gray;")
+        self.status_label.setToolTip("Current calibration state.")
+        setup_layout.addWidget(self.status_label, 7, 0, 1, 3)
+
+        self.sample_label = QLabel("Samples: 0")
+        self.sample_label.setToolTip("Number of captured ADC points.")
+        setup_layout.addWidget(self.sample_label, 8, 0, 1, 3)
+
+        layout.addWidget(setup_group)
+
+        plot_group = QGroupBox("Live Transfer Plot")
+        plot_layout = QVBoxLayout(plot_group)
+        plot_layout.addWidget(self.canvas)
+        layout.addWidget(plot_group)
+
+        layout.addStretch()
+
+    def current_dac_addr(self) -> int:
+        if not self.dac_addrs:
+            return 0
+        return self.dac_addrs[min(self.dac_index_spin.value(), len(self.dac_addrs) - 1)]
+
+    def current_adc_addr(self) -> int:
+        if not self.adc_addrs:
+            return 0
+        return self.adc_addrs[min(self.adc_index_spin.value(), len(self.adc_addrs) - 1)]
+
+    def on_target_changed(self, _):
+        self.update_target_labels()
+        if self.is_running:
+            self.status_label.setText("Running with updated target selection")
+
+    def update_target_labels(self):
+        if self.dac_addrs:
+            dac_index = min(self.dac_index_spin.value(), len(self.dac_addrs) - 1)
+            self.dac_addr_label.setText(f"0x{self.dac_addrs[dac_index]:08X}")
+        else:
+            self.dac_addr_label.setText("n/a")
+
+        if self.adc_addrs:
+            adc_index = min(self.adc_index_spin.value(), len(self.adc_addrs) - 1)
+            self.adc_addr_label.setText(f"0x{self.adc_addrs[adc_index]:08X}")
+        else:
+            self.adc_addr_label.setText("n/a")
+
+        self.axes.set_title(
+            f"DAC {self.dac_index_spin.value()} -> ADC {self.adc_index_spin.value()}"
+        )
+        self.canvas.draw_idle()
+
+    def on_capture_rate_changed(self, value):
+        if self.is_running:
+            self.capture_timer.setInterval(max(1, 1000 // max(1, value)))
+
+    def _selected_addresses(self) -> list[int]:
+        addrs = [self.spgd_addr]
+        dac_addr = self.current_dac_addr()
+        adc_addr = self.current_adc_addr()
+        if dac_addr not in addrs:
+            addrs.append(dac_addr)
+        if adc_addr not in addrs:
+            addrs.append(adc_addr)
+        global_dac_addr = self.dac_addrs[0] if self.dac_addrs else 0
+        if global_dac_addr not in addrs:
+            addrs.append(global_dac_addr)
+        return addrs
+
+    @staticmethod
+    def _signed_adc_value(raw_value: int) -> int:
+        value = raw_value & 0xFFFF
+        if value >= 0x8000:
+            value -= 0x10000
+        return value
+
+    @staticmethod
+    def _adc_voltage(raw_value: int) -> float:
+        return (CalibrationTab._signed_adc_value(raw_value) / 32768.0) * 10.0
+
+    @staticmethod
+    def _prescaler_from_rate(rate_hz: float) -> int:
+        if rate_hz <= 0.0:
+            return 0
+        prescaler = int(round((50000000.0 / rate_hz) - 1.0))
+        return max(0, min(65535, prescaler))
+
+    @staticmethod
+    def _rate_from_prescaler(prescaler: int) -> float:
+        return 100000000.0 / (2.0 * (prescaler + 1))
+
+    def update_rate_labels(self):
+        requested_rate = float(self.ramp_rate_spin.value())
+        prescaler = self._prescaler_from_rate(requested_rate)
+        actual_rate = self._rate_from_prescaler(prescaler)
+        sweep_time = 4096.0 / actual_rate if actual_rate > 0.0 else 0.0
+        self.actual_rate_label.setText(f"{actual_rate:,.3f} Hz")
+        self.sweep_time_label.setText(f"{sweep_time:.3f} s")
+
+    def clear_plot(self):
+        self.samples = []
+        self.plot_line.set_data([], [])
+        self.sample_label.setText("Samples: 0")
+        self.canvas.draw_idle()
+
+    def _set_running_ui(self, running: bool):
+        self.is_running = running
+        self.start_btn.setEnabled(not running)
+        self.stop_btn.setEnabled(running)
+        self.dac_index_spin.setEnabled(not running)
+        self.adc_index_spin.setEnabled(not running)
+        self.ramp_rate_spin.setEnabled(not running)
+        self.force_passthrough_cb.setEnabled(not running)
+        self.auto_stop_cb.setEnabled(not running)
+
+    def start_test(self):
+        if not self.client.connected:
+            QMessageBox.warning(self, "Calibration", "Connect to zynq_server before starting the test.")
+            return
+
+        if not self.dac_addrs or not self.adc_addrs:
+            QMessageBox.warning(self, "Calibration", "Need at least one DAC and one ADC configured.")
+            return
+
+        self.clear_plot()
+
+        read_addrs = self._selected_addresses()
+        resp = self.client.read_all(read_addrs)
+        if resp is None or resp.get("status") != "ok":
+            QMessageBox.warning(self, "Calibration", "Failed to read initial device state.")
+            return
+
+        data = resp.get("data", {})
+        selected_dac_addr = self.current_dac_addr()
+        global_dac_addr = self.dac_addrs[0]
+        adc_addr = self.current_adc_addr()
+
+        self.saved_state = {
+            "spgd": {
+                "ctrl": int(data.get(str(self.spgd_addr), {}).get("0", 0)),
+            },
+            "selected_dac": {
+                "value": int(data.get(str(selected_dac_addr), {}).get("0", 0)) & 0x0FFF,
+                "ctrl": int(data.get(str(selected_dac_addr), {}).get("1", 0)),
+                "pre": int(data.get(str(selected_dac_addr), {}).get("2", 0)),
+            },
+            "global_dac": {
+                "value": int(data.get(str(global_dac_addr), {}).get("0", 0)) & 0x0FFF,
+                "ctrl": int(data.get(str(global_dac_addr), {}).get("1", 0)),
+                "pre": int(data.get(str(global_dac_addr), {}).get("2", 0)),
+            },
+            "adc": {
+                "ctrl": int(data.get(str(adc_addr), {}).get("1", 0)),
+                "pre": int(data.get(str(adc_addr), {}).get("2", 0)),
+            },
+        }
+
+        prescaler = self._prescaler_from_rate(float(self.ramp_rate_spin.value()))
+        actual_rate = self._rate_from_prescaler(prescaler)
+        self.update_rate_labels()
+
+        if self.pause_polling:
+            self.pause_polling()
+
+        if self.force_passthrough_cb.isChecked():
+            spgd_ctrl = self.saved_state["spgd"]["ctrl"] | self.MASK_EN0
+            if not self.client.write_reg(self.spgd_addr, 0, spgd_ctrl):
+                self._abort_start("Failed to enable SPGD passthrough.")
+                return
+
+        if not self.client.write_reg(global_dac_addr, 2, prescaler):
+            self._abort_start("Failed to program DAC ramp prescaler.")
+            return
+
+        if selected_dac_addr != global_dac_addr:
+            if not self.client.write_reg(selected_dac_addr, 2, prescaler):
+                self._abort_start("Failed to program target DAC prescaler.")
+                return
+
+        ramp_ctrl = self.saved_state["selected_dac"]["ctrl"] | self.MASK_MODE | self.MASK_HW_RAMP
+        if not self.client.write_reg(selected_dac_addr, 0, 0):
+            self._abort_start("Failed to zero the DAC before ramping.")
+            return
+        if not self.client.write_reg(selected_dac_addr, 1, ramp_ctrl):
+            self._abort_start("Failed to enable the hardware ramp.")
+            return
+
+        self.capture_timer.start(max(1, 1000 // max(1, self.capture_rate_spin.value())))
+        self._set_running_ui(True)
+        self.status_label.setText(
+            f"Running: DAC {self.dac_index_spin.value()} -> ADC {self.adc_index_spin.value()} at {actual_rate:,.1f} Hz"
+        )
+        self.status_label.setStyleSheet("color: green;")
+
+    def _abort_start(self, message: str):
+        if self.resume_polling:
+            self.resume_polling()
+        self.restore_state()
+        self._set_running_ui(False)
+        self.status_label.setText("Idle")
+        self.status_label.setStyleSheet("color: gray;")
+        QMessageBox.warning(self, "Calibration", message)
+
+    def stop_test(self):
+        if not self.is_running and not self.saved_state:
+            return
+
+        self.capture_timer.stop()
+        self.restore_state()
+        self._set_running_ui(False)
+
+        if self.resume_polling:
+            self.resume_polling()
+        if self.refresh_now:
+            self.refresh_now()
+
+        self.status_label.setText("Idle")
+        self.status_label.setStyleSheet("color: gray;")
+
+    def restore_state(self):
+        if not self.saved_state:
+            return
+
+        selected_dac_addr = self.current_dac_addr()
+        global_dac_addr = self.dac_addrs[0] if self.dac_addrs else 0
+
+        selected_dac = self.saved_state.get("selected_dac", {})
+        global_dac = self.saved_state.get("global_dac", {})
+        spgd = self.saved_state.get("spgd", {})
+
+        if selected_dac:
+            self.client.write_reg(selected_dac_addr, 1, int(selected_dac.get("ctrl", 0)))
+            self.client.write_reg(selected_dac_addr, 0, int(selected_dac.get("value", 0)))
+            self.client.write_reg(selected_dac_addr, 2, int(selected_dac.get("pre", 0)))
+
+        if global_dac and global_dac_addr != selected_dac_addr:
+            self.client.write_reg(global_dac_addr, 1, int(global_dac.get("ctrl", 0)))
+            self.client.write_reg(global_dac_addr, 0, int(global_dac.get("value", 0)))
+            self.client.write_reg(global_dac_addr, 2, int(global_dac.get("pre", 0)))
+
+        if spgd:
+            self.client.write_reg(self.spgd_addr, 0, int(spgd.get("ctrl", 0)))
+
+        self.saved_state = {}
+
+    def capture_sample(self):
+        if not self.is_running:
+            return
+
+        read_addrs = self._selected_addresses()
+        resp = self.client.read_all(read_addrs)
+        if resp is None or resp.get("status") != "ok":
+            self.status_label.setText("Connection lost during calibration")
+            self.status_label.setStyleSheet("color: red;")
+            self.stop_test()
+            return
+
+        data = resp.get("data", {})
+        selected_dac_addr = self.current_dac_addr()
+        adc_addr = self.current_adc_addr()
+
+        dac_data = data.get(str(selected_dac_addr), {})
+        adc_data = data.get(str(adc_addr), {})
+        if not dac_data or not adc_data:
+            return
+
+        dac_code = int(dac_data.get("0", 0)) & 0x0FFF
+        adc_raw = int(adc_data.get("0", 0))
+        adc_code = self._signed_adc_value(adc_raw)
+        adc_voltage = self._adc_voltage(adc_raw)
+
+        self.samples.append((dac_code, adc_code, adc_voltage))
+        self.sample_label.setText(f"Samples: {len(self.samples)} | DAC: {dac_code:04d} | ADC: {adc_code:+06d} | {adc_voltage:+7.3f} V")
+
+        x_vals = [sample[0] for sample in self.samples]
+        y_vals = [sample[2] for sample in self.samples]
+        self.plot_line.set_data(x_vals, y_vals)
+        self.canvas.draw_idle()
+
+        if self.auto_stop_cb.isChecked() and dac_code >= 4095:
+            self.stop_test()
+
+
+# =============================================================================
 # Main Window
 # =============================================================================
 
@@ -773,9 +1194,11 @@ class MainWindow(QMainWindow):
     def __init__(self, host: str = "localhost", port: int = 5000):
         super().__init__()
         self.client = ZynqClient(host, port)
+        self.polling_enabled = True
+        self.poll_interval_ms = 100
         
         self.setWindowTitle("Zynq Dynamic AXI Controller")
-        self.setMinimumSize(600, 700)
+        self.setMinimumSize(900, 800)
         
         self.init_ui()
         
@@ -828,6 +1251,17 @@ class MainWindow(QMainWindow):
             
         self.dac_tab = DACTab(self.client, DAC_ADDRS)
         self.tabs.addTab(self.dac_tab, "DAC Control")
+
+        self.cal_tab = CalibrationTab(
+            self.client,
+            ADC_ADDRS,
+            DAC_ADDRS,
+            SPGD_ADDR,
+            pause_polling=self.pause_polling,
+            resume_polling=self.resume_polling,
+            refresh_now=self.poll_data,
+        )
+        self.tabs.addTab(self.cal_tab, "Calibrate / Test")
             
         layout.addWidget(self.tabs)
         
@@ -847,6 +1281,18 @@ class MainWindow(QMainWindow):
         version_label.setStyleSheet("color: gray;")
         bottom_layout.addWidget(version_label)
         layout.addLayout(bottom_layout)
+
+    def _poll_interval_for_rate(self, rate_hz: int) -> int:
+        return max(1, 1000 // max(1, rate_hz))
+
+    def pause_polling(self):
+        self.polling_enabled = False
+        self.poll_timer.stop()
+
+    def resume_polling(self):
+        self.polling_enabled = True
+        if self.client.connected:
+            self.poll_timer.start(self.poll_interval_ms)
     
     def reconnect(self):
         self.poll_timer.stop()
@@ -861,16 +1307,17 @@ class MainWindow(QMainWindow):
             self.status_label.setText("Connected")
             self.status_label.setStyleSheet("color: green;")
             self.connect_btn.setText("Reconnect")
-            interval = 1000 // self.poll_rate_spin.value()
-            self.poll_timer.start(interval)
+            self.polling_enabled = True
+            self.poll_interval_ms = self._poll_interval_for_rate(self.poll_rate_spin.value())
+            self.poll_timer.start(self.poll_interval_ms)
         else:
             self.status_label.setText("Connection Failed")
             self.status_label.setStyleSheet("color: red;")
     
     def on_poll_rate_change(self, value):
-        if self.poll_timer.isActive():
-            interval = 1000 // value
-            self.poll_timer.setInterval(interval)
+        self.poll_interval_ms = self._poll_interval_for_rate(value)
+        if self.poll_timer.isActive() and self.polling_enabled:
+            self.poll_timer.setInterval(self.poll_interval_ms)
     
     def poll_data(self):
         all_addrs = ADC_ADDRS + DAC_ADDRS + [SPGD_ADDR]
