@@ -27,7 +27,74 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QFont
 
-VERSION = "2.2"
+VERSION = "2.3"
+
+
+def _reg_to_int(value: Any) -> int:
+    """Best-effort conversion for register values returned by JSON transport."""
+    try:
+        if isinstance(value, str):
+            return int(value, 0)
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def format_raw_regs(dev_data: Dict[str, Any], count: int = 4) -> str:
+    """Format device register map values as fixed-width hex readback text."""
+    return " ".join(
+        f"R{reg}=0x{_reg_to_int(dev_data.get(str(reg), 0)) & 0xFFFFFFFF:08X}"
+        for reg in range(count)
+    )
+
+
+def _on_off(value: int) -> str:
+    return "ON" if value else "OFF"
+
+
+def format_spgd_bits(dev_data: Dict[str, Any]) -> str:
+    """Decode SPGD AXI control/config fields from the RTL mapping."""
+    ctrl = _reg_to_int(dev_data.get("0", 0))
+    cfg = _reg_to_int(dev_data.get("1", 0))
+    gamma = _reg_to_int(dev_data.get("2", 0))
+    settle = cfg & 0xFFFF
+    perturb = (cfg >> 16) & 0xFFFF
+    return (
+        f"enable_loop={_on_off(ctrl & 0x01)} "
+        f"passthrough={_on_off(ctrl & 0x02)} "
+        f"soft_reset={(ctrl >> 2) & 0x01} "
+        f"settle={settle} perturb={perturb} gamma={gamma}"
+    )
+
+
+def format_adc_bits(dev_data: Dict[str, Any]) -> str:
+    """Decode LTC2203 AXI fields: R0 sample data, R1 control bits, R2 prescaler."""
+    r0 = _reg_to_int(dev_data.get("0", 0))
+    r1 = _reg_to_int(dev_data.get("1", 0))
+    r2 = _reg_to_int(dev_data.get("2", 0))
+    sample = r0 & 0xFFFF
+    if sample >= 0x8000:
+        sample -= 0x10000
+    return (
+        f"oe={_on_off(r1 & 0x01)} "
+        f"clk_sel={(r1 >> 1) & 0x01} "
+        f"sample={sample:+d} prescaler={r2 & 0xFFFF}"
+    )
+
+
+def format_dac_bits(dev_data: Dict[str, Any]) -> str:
+    """Decode LTC1666 AXI fields: R0 data, R1 control bits, R2 prescaler."""
+    r0 = _reg_to_int(dev_data.get("0", 0))
+    r1 = _reg_to_int(dev_data.get("1", 0))
+    r2 = _reg_to_int(dev_data.get("2", 0))
+    return (
+        f"mode={'MANUAL' if (r1 & 0x01) else 'PASS'} "
+        f"clk0={_on_off(r1 & 0x02)} "
+        f"clk1={_on_off(r1 & 0x04)} "
+        f"latch={_on_off(r1 & 0x08)} "
+        f"ramp={_on_off(r1 & 0x10)} "
+        f"value={r0 & 0x0FFF} prescaler={r2 & 0xFFFF}"
+    )
 
 # =============================================================================
 # Hardware Addresses Configuration
@@ -224,6 +291,15 @@ class MasterTab(QWidget):
         self.adc_info_label.setToolTip("Live decoded ADC readings from all configured ADC addresses.")
         adc_layout.addWidget(self.adc_info_label)
         layout.addWidget(adc_group)
+
+        raw_group = QGroupBox("Raw AXI Registers")
+        raw_layout = QVBoxLayout(raw_group)
+        self.raw_snapshot_label = QLabel("Waiting for data...")
+        self.raw_snapshot_label.setFont(QFont("Courier", 10))
+        self.raw_snapshot_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.raw_snapshot_label.setToolTip("Live AXI readback snapshot for SPGD, ADC, and DAC register banks.")
+        raw_layout.addWidget(self.raw_snapshot_label)
+        layout.addWidget(raw_group)
         
         layout.addStretch()
 
@@ -323,6 +399,33 @@ class MasterTab(QWidget):
         
         if adc_texts:
             self.adc_info_label.setText("\n".join(adc_texts))
+
+        raw_lines = []
+        spgd_data = data.get(str(self.spgd_addr), {})
+        if spgd_data:
+            raw_lines.append(
+                f"SPGD (0x{self.spgd_addr:08X}): {format_raw_regs(spgd_data)}\n"
+                f"  {format_spgd_bits(spgd_data)}"
+            )
+
+        for i, addr in enumerate(self.adc_addrs):
+            adc_data = data.get(str(addr), {})
+            if adc_data:
+                raw_lines.append(
+                    f"ADC {i} (0x{addr:08X}): {format_raw_regs(adc_data)}\n"
+                    f"  {format_adc_bits(adc_data)}"
+                )
+
+        for i, addr in enumerate(self.dac_addrs):
+            dac_data = data.get(str(addr), {})
+            if dac_data:
+                raw_lines.append(
+                    f"DAC {i} (0x{addr:08X}): {format_raw_regs(dac_data)}\n"
+                    f"  {format_dac_bits(dac_data)}"
+                )
+
+        if raw_lines:
+            self.raw_snapshot_label.setText("\n".join(raw_lines))
 
 
 # =============================================================================
@@ -429,6 +532,22 @@ class ADCTab(QWidget):
         control_layout.addWidget(self.freq_label, 2, 1)
         
         layout.addWidget(control_group)
+
+        raw_group = QGroupBox("Raw AXI Registers")
+        raw_layout = QVBoxLayout(raw_group)
+        self.raw_regs_label = QLabel("R0=0x00000000 R1=0x00000000 R2=0x00000000 R3=0x00000000")
+        self.raw_regs_label.setFont(QFont("Courier", 10))
+        self.raw_regs_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.raw_regs_label.setToolTip("Raw register readback for the selected ADC AXI device.")
+        raw_layout.addWidget(self.raw_regs_label)
+
+        self.raw_bits_label = QLabel("oe=OFF clk_sel=0 sample=+0 prescaler=0")
+        self.raw_bits_label.setFont(QFont("Courier", 10))
+        self.raw_bits_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.raw_bits_label.setToolTip("Decoded ADC register fields based on AXI RTL bit assignments.")
+        raw_layout.addWidget(self.raw_bits_label)
+        layout.addWidget(raw_group)
+
         layout.addStretch()
 
     def on_device_changed(self, index):
@@ -456,6 +575,9 @@ class ADCTab(QWidget):
         adc_data = data.get(str(self.current_addr), {})
         if not adc_data:
             return
+
+        self.raw_regs_label.setText(format_raw_regs(adc_data))
+        self.raw_bits_label.setText(format_adc_bits(adc_data))
             
         raw_data = int(adc_data.get("0", 0))
         self.current_ctrl = int(adc_data.get("1", 0))
@@ -513,6 +635,7 @@ class DACTab(QWidget):
         self.global_pre = 0
         self.last_data = {}
         self.ramp_enabled = {addr: False for addr in addrs}
+        self.all_rows: Dict[int, Dict[str, Any]] = {}
         self.init_ui()
     
     def init_ui(self):
@@ -520,15 +643,21 @@ class DACTab(QWidget):
         
         target_group = QGroupBox("Target Device")
         target_layout = QHBoxLayout(target_group)
+        self.select_dac_label = QLabel("Select DAC:")
+        self.select_dac_label.setToolTip("Active DAC target for writes and displayed reads.")
         self.device_combo = QComboBox()
         for i, addr in enumerate(self.addrs):
             self.device_combo.addItem(f"DAC {i} (0x{addr:08X})", addr)
         self.device_combo.currentIndexChanged.connect(self.on_device_changed)
         self.device_combo.setToolTip("Select which DAC base address this tab controls.")
-        select_dac_label = QLabel("Select DAC:")
-        select_dac_label.setToolTip("Active DAC target for writes and displayed reads.")
-        target_layout.addWidget(select_dac_label)
+
+        self.show_all_cb = QCheckBox("Show all DACs")
+        self.show_all_cb.stateChanged.connect(self.on_view_mode_changed)
+        self.show_all_cb.setToolTip("Toggle between single-DAC view and controlling all DAC channels on one page.")
+
+        target_layout.addWidget(self.select_dac_label)
         target_layout.addWidget(self.device_combo)
+        target_layout.addWidget(self.show_all_cb)
         target_layout.addStretch()
         layout.addWidget(target_group)
         
@@ -598,6 +727,52 @@ class DACTab(QWidget):
         
         layout.addWidget(control_group)
 
+        self.all_group = QGroupBox("All DAC Outputs")
+        all_layout = QGridLayout(self.all_group)
+        all_layout.addWidget(QLabel("DAC"), 0, 0)
+        all_layout.addWidget(QLabel("Value"), 0, 1)
+        all_layout.addWidget(QLabel("Slider"), 0, 2)
+        all_layout.addWidget(QLabel("Est. Voltage"), 0, 3)
+        all_layout.addWidget(QLabel("Passthrough"), 0, 4)
+        all_layout.addWidget(QLabel("Ramp"), 0, 5)
+
+        for i, addr in enumerate(self.addrs):
+            row = i + 1
+            name = QLabel(f"DAC {i} (0x{addr:08X})")
+            spin = QSpinBox()
+            spin.setRange(0, 4095)
+            spin.setToolTip("Write DAC code to REG0 for this DAC.")
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(0, 4095)
+            slider.setToolTip("Write DAC code to REG0 for this DAC.")
+            volt = QLabel("0.000 V")
+            volt.setFont(QFont("Courier", 10))
+            pass_cb = QCheckBox()
+            pass_cb.setToolTip("Checked=passthrough mode, unchecked=manual mode.")
+            ramp_cb = QCheckBox()
+            ramp_cb.setToolTip("Enable hardware ramp bit for this DAC.")
+
+            spin.valueChanged.connect(lambda value, a=addr: self.on_all_spin_changed(a, value))
+            slider.valueChanged.connect(lambda value, a=addr: self.on_all_slider_changed(a, value))
+            pass_cb.stateChanged.connect(lambda state, a=addr: self.on_all_passthrough_changed(a, state))
+            ramp_cb.stateChanged.connect(lambda state, a=addr: self.on_all_ramp_changed(a, state))
+
+            all_layout.addWidget(name, row, 0)
+            all_layout.addWidget(spin, row, 1)
+            all_layout.addWidget(slider, row, 2)
+            all_layout.addWidget(volt, row, 3)
+            all_layout.addWidget(pass_cb, row, 4)
+            all_layout.addWidget(ramp_cb, row, 5)
+            self.all_rows[addr] = {
+                "spin": spin,
+                "slider": slider,
+                "volt": volt,
+                "pass_cb": pass_cb,
+                "ramp_cb": ramp_cb,
+            }
+
+        layout.addWidget(self.all_group)
+
         global_group = QGroupBox("Global Controls")
         global_layout = QGridLayout(global_group)
 
@@ -632,7 +807,46 @@ class DACTab(QWidget):
         global_layout.addWidget(self.freq_label, 4, 1)
 
         layout.addWidget(global_group)
+
+        raw_group = QGroupBox("Raw AXI Registers")
+        raw_layout = QVBoxLayout(raw_group)
+        self.raw_selected_label = QLabel("Selected: R0=0x00000000 R1=0x00000000 R2=0x00000000 R3=0x00000000")
+        self.raw_selected_label.setFont(QFont("Courier", 10))
+        self.raw_selected_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.raw_selected_label.setToolTip("Raw register readback for the selected DAC AXI device.")
+        raw_layout.addWidget(self.raw_selected_label)
+
+        self.raw_selected_bits_label = QLabel("Selected bits: mode=PASS clk0=OFF clk1=OFF latch=OFF ramp=OFF value=0 prescaler=0")
+        self.raw_selected_bits_label.setFont(QFont("Courier", 10))
+        self.raw_selected_bits_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.raw_selected_bits_label.setToolTip("Decoded selected-DAC register fields based on AXI RTL bit assignments.")
+        raw_layout.addWidget(self.raw_selected_bits_label)
+
+        self.raw_global_label = QLabel("Global:   R0=0x00000000 R1=0x00000000 R2=0x00000000 R3=0x00000000")
+        self.raw_global_label.setFont(QFont("Courier", 10))
+        self.raw_global_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.raw_global_label.setToolTip("Raw register readback for DAC0 global control mapping.")
+        raw_layout.addWidget(self.raw_global_label)
+
+        self.raw_global_bits_label = QLabel("Global bits: mode=PASS clk0=OFF clk1=OFF latch=OFF ramp=OFF value=0 prescaler=0")
+        self.raw_global_bits_label.setFont(QFont("Courier", 10))
+        self.raw_global_bits_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.raw_global_bits_label.setToolTip("Decoded DAC0 register fields based on AXI RTL bit assignments.")
+        raw_layout.addWidget(self.raw_global_bits_label)
+
+        layout.addWidget(raw_group)
+
+        self.single_mode_widgets = [self.output_group, control_group, raw_group]
+        self.all_group.setVisible(False)
         layout.addStretch()
+
+    def on_view_mode_changed(self, state):
+        show_all = bool(state)
+        self.select_dac_label.setVisible(not show_all)
+        self.device_combo.setVisible(not show_all)
+        self.all_group.setVisible(show_all)
+        for widget in self.single_mode_widgets:
+            widget.setVisible(not show_all)
 
     def on_device_changed(self, index):
         self.current_addr = self.device_combo.itemData(index)
@@ -670,6 +884,87 @@ class DACTab(QWidget):
             self.current_ctrl = ctrl
             if self.current_addr == self.global_addr:
                 self.global_ctrl = ctrl
+
+    def on_all_spin_changed(self, addr: int, value: int):
+        if not self.client.connected:
+            return
+        row = self.all_rows.get(addr)
+        if not row:
+            return
+        row["slider"].blockSignals(True)
+        row["slider"].setValue(value)
+        row["slider"].blockSignals(False)
+        row["volt"].setText(f"{(value / 4095.0) * 4.0:.3f} V")
+        self.client.write_reg(addr, 0, value)
+
+    def on_all_slider_changed(self, addr: int, value: int):
+        if not self.client.connected:
+            return
+        row = self.all_rows.get(addr)
+        if not row:
+            return
+        row["spin"].blockSignals(True)
+        row["spin"].setValue(value)
+        row["spin"].blockSignals(False)
+        row["volt"].setText(f"{(value / 4095.0) * 4.0:.3f} V")
+        self.client.write_reg(addr, 0, value)
+
+    def on_all_passthrough_changed(self, addr: int, state: int):
+        if not self.client.connected:
+            return
+        row = self.all_rows.get(addr)
+        if not row:
+            return
+
+        dev_data = self.last_data.get(str(addr), {}) if isinstance(self.last_data, dict) else {}
+        ctrl = _reg_to_int(dev_data.get("1", 0))
+        is_passthrough = bool(state)
+
+        if is_passthrough:
+            ctrl &= ~self.MASK_MODE
+            ctrl &= ~self.MASK_HW_RAMP
+        else:
+            ctrl |= self.MASK_MODE
+
+        self.client.write_reg(addr, 1, ctrl)
+
+        row["ramp_cb"].setEnabled(not is_passthrough)
+        if is_passthrough:
+            row["ramp_cb"].blockSignals(True)
+            row["ramp_cb"].setChecked(False)
+            row["ramp_cb"].blockSignals(False)
+
+        if addr == self.current_addr:
+            self.current_ctrl = ctrl
+        if addr == self.global_addr:
+            self.global_ctrl = ctrl
+
+    def on_all_ramp_changed(self, addr: int, state: int):
+        if not self.client.connected:
+            return
+        row = self.all_rows.get(addr)
+        if not row:
+            return
+
+        dev_data = self.last_data.get(str(addr), {}) if isinstance(self.last_data, dict) else {}
+        ctrl = _reg_to_int(dev_data.get("1", 0))
+
+        if state:
+            ctrl |= self.MASK_MODE
+            ctrl |= self.MASK_HW_RAMP
+            row["pass_cb"].blockSignals(True)
+            row["pass_cb"].setChecked(False)
+            row["pass_cb"].blockSignals(False)
+            row["ramp_cb"].setEnabled(True)
+        else:
+            ctrl &= ~self.MASK_HW_RAMP
+
+        self.client.write_reg(addr, 1, ctrl)
+
+        if addr == self.current_addr:
+            self.current_ctrl = ctrl
+        if addr == self.global_addr:
+            self.global_ctrl = ctrl
 
     def on_global_clock_change(self, state):
         if self.client.connected:
@@ -725,15 +1020,39 @@ class DACTab(QWidget):
             if dev_data:
                 ctrl = int(dev_data.get("1", 0))
                 self.ramp_enabled[addr] = bool(ctrl & self.MASK_HW_RAMP)
+                value = int(dev_data.get("0", 0)) & 0x0FFF
+                row = self.all_rows.get(addr)
+                if row:
+                    row["spin"].blockSignals(True)
+                    row["spin"].setValue(value)
+                    row["spin"].blockSignals(False)
+                    row["slider"].blockSignals(True)
+                    row["slider"].setValue(value)
+                    row["slider"].blockSignals(False)
+                    row["volt"].setText(f"{(value / 4095.0) * 4.0:.3f} V")
+                    is_passthrough = not bool(ctrl & self.MASK_MODE)
+                    has_ramp = bool(ctrl & self.MASK_HW_RAMP)
+                    row["pass_cb"].blockSignals(True)
+                    row["pass_cb"].setChecked(is_passthrough)
+                    row["pass_cb"].blockSignals(False)
+                    row["ramp_cb"].setEnabled(not is_passthrough)
+                    row["ramp_cb"].blockSignals(True)
+                    row["ramp_cb"].setChecked(has_ramp)
+                    row["ramp_cb"].blockSignals(False)
 
         dac_data = data.get(str(self.current_addr), {})
         if not dac_data:
             return
 
+        self.raw_selected_label.setText(f"Selected: {format_raw_regs(dac_data)}")
+        self.raw_selected_bits_label.setText(f"Selected bits: {format_dac_bits(dac_data)}")
+
         global_data = data.get(str(self.global_addr), {})
         if global_data:
             self.global_ctrl = int(global_data.get("1", 0))
             self.global_pre = int(global_data.get("2", 0))
+            self.raw_global_label.setText(f"Global:   {format_raw_regs(global_data)}")
+            self.raw_global_bits_label.setText(f"Global bits: {format_dac_bits(global_data)}")
             
         val = int(dac_data.get("0", 0)) & 0x0FFF
         self.current_ctrl = int(dac_data.get("1", 0))
