@@ -57,12 +57,17 @@ def format_spgd_bits(dev_data: Dict[str, Any]) -> str:
     ctrl = _reg_to_int(dev_data.get("0", 0))
     cfg = _reg_to_int(dev_data.get("1", 0))
     gamma = _reg_to_int(dev_data.get("2", 0))
+    reg3 = _reg_to_int(dev_data.get("3", 0))
     settle = cfg & 0xFFFF
     perturb = (cfg >> 16) & 0xFFFF
+    auto_enable = (ctrl >> 3) & 0x01
+    v2pi = reg3 & 0x0FFF
+    auto_period = (reg3 >> 16) & 0xFFFF
     return (
         f"enable_loop={_on_off(ctrl & 0x01)} "
         f"passthrough={_on_off(ctrl & 0x02)} "
         f"soft_reset={(ctrl >> 2) & 0x01} "
+        f"auto_reset={_on_off(auto_enable)} period_ms={auto_period} v2pi_counts={v2pi} "
         f"settle={settle} perturb={perturb} gamma={gamma}"
     )
 
@@ -260,6 +265,32 @@ class MasterTab(QWidget):
         self.spgd_reset_btn.clicked.connect(self.on_spgd_reset)
         self.spgd_reset_btn.setToolTip("Pulse control bit 2 for one-shot SPGD soft reset.")
         spgd_layout.addWidget(self.spgd_reset_btn, 4, 0, 1, 2)
+
+        # Auto-reset controls
+        self.spgd_auto_reset_cb = QCheckBox("Auto-Reset Enable")
+        self.spgd_auto_reset_cb.stateChanged.connect(self.on_spgd_auto_reset)
+        self.spgd_auto_reset_cb.setToolTip("Enable hardware automatic periodic soft reset (bit 3)")
+        spgd_layout.addWidget(self.spgd_auto_reset_cb, 5, 0)
+
+        self.spgd_period_spin = QSpinBox()
+        self.spgd_period_spin.setRange(0, 65535)
+        self.spgd_period_spin.setValue(10)
+        self.spgd_period_spin.valueChanged.connect(self.on_spgd_period)
+        self.spgd_period_spin.setToolTip("Auto-reset period in milliseconds")
+        spgd_layout.addWidget(QLabel("Auto-reset (ms):"), 5, 1)
+        spgd_layout.addWidget(self.spgd_period_spin, 5, 2)
+
+        # V2PI threshold control (DAC counts) + voltage display
+        self.spgd_v2pi_spin = QSpinBox()
+        self.spgd_v2pi_spin.setRange(0, 4096)
+        # Default to ~3.2 V -> 0.8 * 4096 = 3277
+        self.spgd_v2pi_spin.setValue(3277)
+        self.spgd_v2pi_spin.valueChanged.connect(self.on_spgd_v2pi)
+        self.spgd_v2pi_spin.setToolTip("V2PI threshold in DAC counts (0 = disabled; max 4096 -> 4V)")
+        spgd_layout.addWidget(QLabel("V2PI (counts):"), 6, 0)
+        spgd_layout.addWidget(self.spgd_v2pi_spin, 6, 1)
+        self.spgd_v2pi_voltage_label = QLabel(f"{(3277/4096.0)*4.0:.3f} V")
+        spgd_layout.addWidget(self.spgd_v2pi_voltage_label, 6, 2)
         layout.addWidget(spgd_group)
         
         # --- Master DAC Control ---
@@ -340,6 +371,29 @@ class MasterTab(QWidget):
         if self.client.connected:
             self.client.pulse_bit(self.spgd_addr, 2)
 
+    def on_spgd_auto_reset(self, state):
+        if self.client.connected:
+            ctrl = self.spgd_ctrl
+            if state:
+                ctrl |= 0x08
+            else:
+                ctrl &= ~0x08
+            self.client.write_reg(self.spgd_addr, 0, ctrl)
+            self.spgd_ctrl = ctrl
+
+    def on_spgd_period(self, value):
+        if self.client.connected:
+            reg3 = (value << 16) | (self.spgd_v2pi_spin.value() & 0x0FFF)
+            self.client.write_reg(self.spgd_addr, 3, reg3)
+
+    def on_spgd_v2pi(self, value):
+        # update register and show voltage conversion (0-4V range)
+        if self.client.connected:
+            reg3 = (self.spgd_period_spin.value() << 16) | (value & 0x0FFF)
+            self.client.write_reg(self.spgd_addr, 3, reg3)
+        voltage = (value / 4096.0) * 4.0
+        self.spgd_v2pi_voltage_label.setText(f"{voltage:.3f} V")
+
     def on_master_dac_slider(self, val):
         self.master_dac_spin.blockSignals(True)
         self.master_dac_spin.setValue(val)
@@ -384,6 +438,25 @@ class MasterTab(QWidget):
             self.spgd_gamma_spin.blockSignals(True)
             self.spgd_gamma_spin.setValue(gamma)
             self.spgd_gamma_spin.blockSignals(False)
+            # reg3 contains auto-reset period (high 16) and v2pi counts (low 16)
+            reg3 = int(spgd_d.get("3", 0))
+            v2pi = reg3 & 0x0FFF
+            period = (reg3 >> 16) & 0xFFFF
+
+            self.spgd_auto_reset_cb.blockSignals(True)
+            self.spgd_auto_reset_cb.setChecked(bool(self.spgd_ctrl & 0x08))
+            self.spgd_auto_reset_cb.blockSignals(False)
+
+            self.spgd_period_spin.blockSignals(True)
+            self.spgd_period_spin.setValue(period)
+            self.spgd_period_spin.blockSignals(False)
+
+            self.spgd_v2pi_spin.blockSignals(True)
+            self.spgd_v2pi_spin.setValue(v2pi)
+            self.spgd_v2pi_spin.blockSignals(False)
+            # update voltage label (12-bit scale -> 4096 = 4V)
+            v_voltage = (v2pi / 4096.0) * 4.0
+            self.spgd_v2pi_voltage_label.setText(f"{v_voltage:.3f} V")
             
         # Update ADC Overview
         adc_texts = []
@@ -1493,6 +1566,15 @@ class CalibrationTab(QWidget):
         adc_code = self._signed_adc_value(adc_raw)
         adc_voltage = self._adc_voltage(adc_raw)
 
+        # Detect wrap (ramp returned to left) to optionally insert a break
+        wrap_detected = False
+        if self.samples:
+            prev_dac = self.samples[-1][0]
+            if dac_code < prev_dac:
+                wrap_detected = True
+                # insert NaN separator so matplotlib doesn't draw a connecting line
+                self.samples.append((float('nan'), float('nan'), float('nan')))
+
         self.samples.append((dac_code, adc_code, adc_voltage))
         self.sample_label.setText(f"Samples: {len(self.samples)} | DAC: {dac_code:04d} | ADC: {adc_code:+06d} | {adc_voltage:+7.3f} V")
 
@@ -1501,8 +1583,12 @@ class CalibrationTab(QWidget):
         self.plot_line.set_data(x_vals, y_vals)
         self.canvas.draw_idle()
 
-        if self.auto_stop_cb.isChecked() and dac_code >= 4095:
-            self.stop_test()
+        # Auto-stop: stop either when hitting full-scale or when a wrap (completed one sweep) is detected
+        if self.auto_stop_cb.isChecked():
+            if dac_code >= 4095:
+                self.stop_test()
+            elif wrap_detected:
+                self.stop_test()
 
 
 # =============================================================================

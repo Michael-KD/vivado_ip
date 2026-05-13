@@ -27,7 +27,9 @@ module spgd_datapath #(
 
     // Hardware Interfaces
     input  logic [ADC_WIDTH-1:0] adc_data_in,
-    output logic [DAC_WIDTH-1:0] dac_data_out [NUM_CHANNELS] // unpacked array of 8 DAC values
+    output logic [DAC_WIDTH-1:0] dac_data_out [NUM_CHANNELS], // unpacked array of 8 DAC values
+    // V2PI threshold in DAC counts (12-bit: 0 disables wrap, 1..4096 = counts)
+    input  logic [11:0] v2pi_counts
 );
 
     // ==========================================
@@ -137,7 +139,14 @@ module spgd_datapath #(
                 end else if (soft_reset) begin
                     u_reg[i] <= {1'b1, {(DAC_WIDTH-1){1'b0}}}; // Reset to mid-scale
                 end else if (commit_new_u) begin
-                    u_reg[i] <= next_u;
+                    // Apply modulo wrap if v2pi_counts != 0 (extend to DAC width)
+                    if (v2pi_counts != 0) begin
+                        logic [DAC_WIDTH-1:0] v2pi_ext;
+                        v2pi_ext = {{(DAC_WIDTH-12){1'b0}}, v2pi_counts};
+                        u_reg[i] <= next_u % v2pi_ext;
+                    end else begin
+                        u_reg[i] <= next_u;
+                    end
                 end
             end
             

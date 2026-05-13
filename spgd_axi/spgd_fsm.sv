@@ -7,6 +7,11 @@ module spgd_fsm (
     // AXI Control Signals from processor
     input  logic enable_loop,
     input  logic [15:0] settle_cycles, // programmable wait time
+    // Auto-reset controls
+    input  logic auto_reset_enable,
+    input  logic [15:0] auto_reset_period_ms,
+    // Auto-reset pulse output (one clock)
+    output logic auto_reset_pulse,
     
     // Control Signals to your Datapath
     output logic trigger_lfsr,
@@ -35,6 +40,11 @@ module spgd_fsm (
     logic [15:0] wait_counter;
     logic counter_done;
 
+    // Auto-reset millisecond timer (derived from 100 MHz clock)
+    localparam integer CLK_PER_MS = 100000; // 100 MHz -> 100,000 cycles per ms
+    logic [16:0] cycle_counter; // enough to count up to CLK_PER_MS
+    logic [15:0] ms_counter;    // count milliseconds up to 65535
+
     // ==========================================
     // 1. State Register & Wait Counter
     // ==========================================
@@ -42,6 +52,9 @@ module spgd_fsm (
         if (!rst_n) begin
             current_state <= IDLE;
             wait_counter  <= 16'd0;
+            cycle_counter <= '0;
+            ms_counter    <= '0;
+            auto_reset_pulse <= 1'b0;
         end else begin
             current_state <= next_state;
             
@@ -55,6 +68,37 @@ module spgd_fsm (
     end
 
     assign counter_done = (wait_counter >= settle_cycles);
+
+    // ==========================================
+    // Auto-reset timer logic
+    // ==========================================
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            cycle_counter <= '0;
+            ms_counter    <= '0;
+            auto_reset_pulse <= 1'b0;
+        end else begin
+            auto_reset_pulse <= 1'b0; // default
+            if (auto_reset_enable) begin
+                // increment cycle counter
+                if (cycle_counter >= CLK_PER_MS-1) begin
+                    cycle_counter <= 17'd0;
+                    // increment ms counter
+                    if (ms_counter >= auto_reset_period_ms - 1) begin
+                        ms_counter <= 16'd0;
+                        auto_reset_pulse <= 1'b1; // generate one-clock pulse
+                    end else begin
+                        ms_counter <= ms_counter + 1;
+                    end
+                end else begin
+                    cycle_counter <= cycle_counter + 1;
+                end
+            end else begin
+                cycle_counter <= 17'd0;
+                ms_counter <= 16'd0;
+            end
+        end
+    end
 
     // ==========================================
     // 2. Next State Logic

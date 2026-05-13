@@ -226,7 +226,8 @@
 	      slv_reg0 <= 0;
 	      slv_reg1 <= 0;
 	      slv_reg2 <= 0;
-	      slv_reg3 <= 0;
+	      // Default: auto_reset_period_ms = 10 (0x000A), v2pi_counts = 3277 (0x0CCD => ~3.2V)
+	      slv_reg3 <= 32'h000A0CCD;
 	    end 
 	  else begin
 	    if (slv_reg_wren)
@@ -405,14 +406,15 @@
 	// Register mapping:
 	// slv_reg0[0]       : enable_loop
 	// slv_reg0[1]       : passthrough_mode (bypasses SPGD, uses math_accelerator)
-	// slv_reg0[2]       : soft_reset (resets DAC channels to mid-scale)
+	// slv_reg0[2]       : soft_reset (manual one-shot reset)
+	// slv_reg0[3]       : auto_reset_enable (hardware periodic reset enable)
 	// slv_reg1[15:0]    : settle_cycles
 	// slv_reg1[31:16]   : perturb_amp
 	// slv_reg2[31:0]    : gamma_lr
 	
 	// Control signals
 	wire passthrough_mode = slv_reg0[1];
-	wire soft_reset       = slv_reg0[2];
+
 	
 	// Internal wires for SPGD output
 	wire [(NUM_CHANNELS*DAC_WIDTH)-1:0] spgd_dac_out;
@@ -447,10 +449,13 @@
 	) u_spgd_top (
 		.clk(S_AXI_ACLK),
 		.rst_n(S_AXI_ARESETN),
-		
+        
 		// Control signals from AXI registers
 		.enable_loop(slv_reg0[0]),
-		.soft_reset(soft_reset),
+		.manual_soft_reset(slv_reg0[2]),
+		.auto_reset_enable(slv_reg0[3]),
+		.auto_reset_period_ms(slv_reg3[31:16]),
+		.v2pi_counts(slv_reg3[11:0]),
 		.settle_cycles(slv_reg1[15:0]),
 		.perturb_amp(slv_reg1[31:16]),
 		.gamma_lr(slv_reg2),
