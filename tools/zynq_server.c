@@ -8,12 +8,12 @@
  * 
  * Commands:
  *   {"cmd":"read_all","addresses":[2147680256, 2147745792]}
- *     -> Returns register 0-2 values for all requested addresses
+ *     -> Returns register 0-3 values for all requested addresses
  *   
- *   {"cmd":"read","addr":2147483648,"reg":0-2}
+ *   {"cmd":"read","addr":2147483648,"reg":0-3}
  *     -> Returns single register value
  *   
- *   {"cmd":"write","addr":2147483648,"reg":0-2,"value":N}
+ *   {"cmd":"write","addr":2147483648,"reg":0-3,"value":N}
  *     -> Writes value to register
  *
  *   {"cmd":"pulse","addr":2147483648,"bit":2}
@@ -214,10 +214,11 @@ static char *handle_read_all(json_object *req) {
         uint32_t addr = (uint32_t)json_object_get_int64(addr_item);
         volatile uint32_t *regs = map_address(addr);
         if (regs) {
-            uint32_t r0, r1, r2;
+            uint32_t r0, r1, r2, r3;
             if (safe_read_reg(regs, 0, &r0) != 0 ||
                 safe_read_reg(regs, 1, &r1) != 0 ||
-                safe_read_reg(regs, 2, &r2) != 0) {
+                safe_read_reg(regs, 2, &r2) != 0 ||
+                safe_read_reg(regs, 3, &r3) != 0) {
                 continue;
             }
 
@@ -225,6 +226,7 @@ static char *handle_read_all(json_object *req) {
             json_object_object_add(dev_data, "0", json_object_new_int64(r0));
             json_object_object_add(dev_data, "1", json_object_new_int64(r1));
             json_object_object_add(dev_data, "2", json_object_new_int64(r2));
+            json_object_object_add(dev_data, "3", json_object_new_int64(r3));
             
             char addr_str[32];
             snprintf(addr_str, sizeof(addr_str), "%u", addr);
@@ -256,8 +258,8 @@ static char *handle_read(json_object *req) {
     uint32_t addr = (uint32_t)json_object_get_int64(addr_item);
     int reg = json_object_get_int(reg_item);
 
-    if (reg < 0 || reg > 2) {
-        return make_error_response("Register index must be 0-2");
+    if (reg < 0 || reg > 3) {
+        return make_error_response("Register index must be 0-3");
     }
 
     volatile uint32_t *regs = map_address(addr);
@@ -294,8 +296,8 @@ static char *handle_write(json_object *req) {
     int reg = json_object_get_int(reg_item);
     uint32_t value = (uint32_t)json_object_get_int64(val_item);
 
-    if (reg < 0 || reg > 2) {
-        return make_error_response("Register index must be 0-2");
+    if (reg < 0 || reg > 3) {
+        return make_error_response("Register index must be 0-3");
     }
 
     volatile uint32_t *regs = map_address(addr);
