@@ -411,6 +411,9 @@
 	// slv_reg1[15:0]    : settle_cycles
 	// slv_reg1[31:16]   : perturb_amp
 	// slv_reg2[31:0]    : gamma_lr
+	// slv_reg3[11:0]    : v2pi_counts
+	// slv_reg3[15:12]   : epoch_bit_select (Hadamard epoch sign-flip bit)
+	// slv_reg3[31:16]   : auto_reset_period_ms
 	
 	// Control signals
 	wire passthrough_mode = slv_reg0[1];
@@ -441,7 +444,7 @@
 		.data_out(math_accel_out)
 	);
 	
-	// SPGD Top Level Module
+	// SPGD Top Level Module (Hadamard variant)
 	spgd_top #(
 		.NUM_CHANNELS(NUM_CHANNELS),
 		.ADC_WIDTH(ADC_WIDTH),
@@ -459,6 +462,7 @@
 		.settle_cycles(slv_reg1[15:0]),
 		.perturb_amp(slv_reg1[31:16]),
 		.gamma_lr(slv_reg2),
+		.epoch_bit_select(slv_reg3[15:12]),
 		
 		// Hardware interfaces
 		.adc_data_in(adc_data_in),

@@ -14,8 +14,8 @@ module spgd_fsm (
     output logic auto_reset_pulse,
     
     // Control Signals to your Datapath
-    output logic trigger_lfsr,
-    output logic select_plus_minus,    // 1 = output u+du, 0 = output u-du
+    output logic advance_row,           // Advance to next Hadamard row
+    output logic select_plus_minus,     // 1 = output u+du, 0 = output u-du
     output logic latch_j_plus,
     output logic latch_j_minus,
     output logic trigger_dsp_update,
@@ -149,7 +149,7 @@ module spgd_fsm (
     // 3. Output Logic
     // ==========================================
     always_comb begin
-        trigger_lfsr       = 1'b0;
+        advance_row        = 1'b0;
         select_plus_minus  = 1'b0; 
         latch_j_plus       = 1'b0;
         latch_j_minus      = 1'b0;
@@ -157,7 +157,7 @@ module spgd_fsm (
         commit_new_u       = 1'b0;
 
         case (current_state)
-            GEN_PERTURB: trigger_lfsr = 1'b1;
+            GEN_PERTURB: advance_row = 1'b1;   // Advance to next Hadamard row
             
             APPLY_PLUS:  select_plus_minus = 1'b1; // Mux selects (u + du)
             WAIT_PLUS:   select_plus_minus = 1'b1; // Hold mux during wait

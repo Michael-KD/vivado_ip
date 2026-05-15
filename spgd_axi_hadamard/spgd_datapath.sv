@@ -18,8 +18,8 @@ module spgd_datapath #(
     input  logic trigger_dsp_update,
     input  logic commit_new_u,
 
-    // LFSR Array Input
-    input  logic [NUM_CHANNELS-1:0] random_flips,
+    // Hadamard Dither Input (replaces LFSR random_flips)
+    input  logic [NUM_CHANNELS-1:0] dither_signs,
 
     // Algorithm parameters (from processor)
     input  logic [DAC_WIDTH-1:0] perturb_amp, // delta_u magnitude (unsigned)
@@ -75,8 +75,9 @@ module spgd_datapath #(
         for (i = 0; i < NUM_CHANNELS; i++) begin : gen_channel_alu
             
             // 1. Determine the perturbation for this specific channel (+A or -A)
+            //    dither_signs[i]: 1 = +perturb_amp, 0 = -perturb_amp
             logic signed [DAC_WIDTH:0] delta_u;
-            assign delta_u = random_flips[i] ? {1'b0, perturb_amp} : -{1'b0, perturb_amp};
+            assign delta_u = dither_signs[i] ? {1'b0, perturb_amp} : -{1'b0, perturb_amp};
 
             // 2. Output Multiplexer (to physical DAC)
             // If FSM says PLUS: output = u + delta_u
@@ -115,7 +116,7 @@ module spgd_datapath #(
 
             // Calculate with 1 extra bit (DAC_WIDTH + 1) to catch overflow/underflow
             logic signed [DAC_WIDTH+1:0] temp_next_u;
-            assign temp_next_u = random_flips[i] ? 
+            assign temp_next_u = dither_signs[i] ? 
                                 ($signed({2'b00, u_reg[i]}) + $signed(scaled_update)) : 
                                 ($signed({2'b00, u_reg[i]}) - $signed(scaled_update));
 

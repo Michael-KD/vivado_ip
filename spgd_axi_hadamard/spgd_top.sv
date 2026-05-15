@@ -18,6 +18,7 @@ module spgd_top #(
     input  logic [15:0] settle_cycles,
     input  logic [15:0] perturb_amp,
     input  logic [31:0] gamma_lr,
+    input  logic [3:0]  epoch_bit_select,   // Hadamard epoch sign-flip control
 
     // Hardware Interfaces
     input  logic [ADC_WIDTH-1:0] adc_data_in,
@@ -26,16 +27,16 @@ module spgd_top #(
     output logic [(NUM_CHANNELS*DAC_WIDTH)-1:0] dac_data_flat_out
 );
 
-    // FSM to Datapath & LFSR
-    logic trigger_lfsr;
+    // FSM to Datapath & Hadamard Dither
+    logic advance_row;
     logic select_plus_minus;
     logic latch_j_plus;
     logic latch_j_minus;
     logic trigger_dsp_update;
     logic commit_new_u;
 
-    // LFSR to Datapath
-    logic [NUM_CHANNELS-1:0] random_flips;
+    // Hadamard Dither to Datapath
+    logic [NUM_CHANNELS-1:0] dither_signs;
 
     // Unpacked DAC array from Datapath (easier to read)
     logic [DAC_WIDTH-1:0] dac_data_array [NUM_CHANNELS];
@@ -60,7 +61,7 @@ module spgd_top #(
         .auto_reset_period_ms (auto_reset_period_ms),
         .auto_reset_pulse   (auto_reset_pulse),
         .settle_cycles      (settle_cycles),
-        .trigger_lfsr       (trigger_lfsr),
+        .advance_row        (advance_row),
         .select_plus_minus  (select_plus_minus),
         .latch_j_plus       (latch_j_plus),
         .latch_j_minus      (latch_j_minus),
@@ -68,14 +69,17 @@ module spgd_top #(
         .commit_new_u       (commit_new_u)
     );
 
-    // LFSR Array
-    dither_array #(
+    // Hadamard Dither Generator (replaces LFSR array)
+    hadamard_dither #(
         .NUM_CHANNELS(NUM_CHANNELS)
-    ) u_lfsr_array (
-        .clk           (clk),
-        .rst_n         (rst_n),
-        .enable_dither (trigger_lfsr),
-        .random_flips  (random_flips)
+    ) u_hadamard_dither (
+        .clk             (clk),
+        .rst_n           (rst_n),
+        .advance_row     (advance_row),
+        .epoch_bit_select(epoch_bit_select),
+        .dither_signs    (dither_signs),
+        .current_row     (),             // Diagnostic — unconnected for now
+        .epoch_count     ()              // Diagnostic — unconnected for now
     );
 
     // Datapath
@@ -92,7 +96,7 @@ module spgd_top #(
         .latch_j_minus      (latch_j_minus),
         .trigger_dsp_update (trigger_dsp_update),
         .commit_new_u       (commit_new_u),
-        .random_flips       (random_flips),
+        .dither_signs       (dither_signs),
         .perturb_amp        (perturb_amp),
         .gamma_lr           (gamma_lr),
         .adc_data_in        (adc_data_in),
