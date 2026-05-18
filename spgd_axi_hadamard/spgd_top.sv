@@ -153,7 +153,7 @@ module spgd_top #(
             //   [143:128] j_plus_out[15:0]  ADC reading at u+du (16-bit signed, fits in 16b)
             //   [159:144] j_minus_out[15:0] ADC reading at u-du (16-bit signed, fits in 16b)
             //   [175:160] delta_j[15:0]     Lower 16 bits of 17-bit gradient
-            //   [191:176] scaled_update      gamma * delta_j >> 16 (one channel, indicative)
+            //   [191:176] scaled_update      gamma*dj>>16, DAC_WIDTH bits sign-extended to 16
             //   [207:192] epoch_count        Hadamard epoch counter
             //   [215:208] {5'd0, row[2:0]}  Current Hadamard row index
             //   [216]     delta_j[16]       MSB of 17-bit delta_j (overflow guard bit)
@@ -164,7 +164,7 @@ module spgd_top #(
             m_axis_tdata[143:128] <= j_plus_out[15:0];
             m_axis_tdata[159:144] <= j_minus_out[15:0];
             m_axis_tdata[175:160] <= delta_j_out[15:0];   // lower 16 bits
-            m_axis_tdata[191:176] <= scaled_update_out[15:0];
+            m_axis_tdata[191:176] <= {{(16-DAC_WIDTH){scaled_update_out[DAC_WIDTH-1]}}, scaled_update_out};
             m_axis_tdata[207:192] <= epoch_count;
             m_axis_tdata[215:208] <= {5'd0, current_row};
             m_axis_tdata[216]     <= delta_j_out[16];     // MSB — prevents aliasing for |dj|>32767
