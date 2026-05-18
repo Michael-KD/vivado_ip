@@ -53,7 +53,7 @@
 		input wire  s00_axi_rready
 	);
 // Instantiation of Axi Bus Interface S00_AXI
-	spgd_axi_v1_0_S00_AXI # ( 
+	spgd_axi_hadamard_v1_0_S00_AXI # ( 
 		.NUM_CHANNELS(NUM_CHANNELS),
 		.ADC_WIDTH(ADC_WIDTH),
 		.DAC_WIDTH(DAC_WIDTH),

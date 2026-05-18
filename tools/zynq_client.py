@@ -1712,13 +1712,14 @@ class TelemetryTab(QWidget):
         controls.addStretch()
         layout.addLayout(controls)
         
-        self.figure = Figure(figsize=(8, 6))
+        self.figure = Figure(figsize=(8, 9))
         self.canvas = FigureCanvas(self.figure)
         layout.addWidget(self.canvas)
-        
-        self.ax_j = self.figure.add_subplot(211)
-        self.ax_dac = self.figure.add_subplot(212)
-        self.figure.tight_layout()
+
+        self.ax_j   = self.figure.add_subplot(311)
+        self.ax_dj  = self.figure.add_subplot(312)
+        self.ax_dac = self.figure.add_subplot(313)
+        self.figure.tight_layout(pad=2.0)
         
     def capture_and_plot(self):
         if not self.client.connected:
@@ -1752,10 +1753,21 @@ class TelemetryTab(QWidget):
             return
 
 
-        j_plus = []
+        j_plus  = []
         j_minus = []
+        delta_j = []
         dacs = [[] for _ in range(8)]
-        
+
+        # 256-bit packet word map (32-bit words, little-endian LSB first):
+        #   w0 [31:0]   = dac0[15:0]  | dac1[15:0]
+        #   w1 [63:32]  = dac2[15:0]  | dac3[15:0]
+        #   w2 [95:64]  = dac4[15:0]  | dac5[15:0]
+        #   w3 [127:96] = dac6[15:0]  | dac7[15:0]
+        #   w4 [159:128]= j_plus[15:0]| j_minus[15:0]
+        #   w5 [191:160]= delta_j[15:0]| scaled_update[15:0]
+        #   w6 [223:192]= epoch[15:0] | {7'd0, delta_j[16], row[2:0], 5'd0}
+        #                              ^^ bit 24 of w6 = delta_j MSB
+        #   w7 [255:224]= 39'd0 reserved
         for i in range(num_packets):
             idx = i * 8
             w0 = data[idx]
@@ -1763,8 +1775,10 @@ class TelemetryTab(QWidget):
             w2 = data[idx+2]
             w3 = data[idx+3]
             w4 = data[idx+4]
-            
-            # DACs
+            w5 = data[idx+5]
+            w6 = data[idx+6]
+
+            # DAC baseline phases (unsigned 16-bit)
             dacs[0].append(w0 & 0xFFFF)
             dacs[1].append((w0 >> 16) & 0xFFFF)
             dacs[2].append(w1 & 0xFFFF)
@@ -1773,35 +1787,50 @@ class TelemetryTab(QWidget):
             dacs[5].append((w2 >> 16) & 0xFFFF)
             dacs[6].append(w3 & 0xFFFF)
             dacs[7].append((w3 >> 16) & 0xFFFF)
-            
-            # J values (16-bit signed)
+
+            # J+ and J- are sign-extended 16-bit ADC readings (never exceed 16-bit range)
             jp = w4 & 0xFFFF
             jm = (w4 >> 16) & 0xFFFF
             if jp >= 0x8000: jp -= 0x10000
             if jm >= 0x8000: jm -= 0x10000
-            
             j_plus.append(jp)
             j_minus.append(jm)
+
+            # delta_j is 17-bit signed: low 16 bits in w5[15:0], MSB (bit 16) in w6 bit 24.
+            # Reconstruct and sign-extend from 17 bits to avoid aliasing for |dj| > 32767.
+            dj_low  = w5 & 0xFFFF
+            dj_msb  = (w6 >> 24) & 0x1          # bit 216 of packet = bit 24 of word 6
+            dj_raw  = (dj_msb << 16) | dj_low   # reassemble 17-bit unsigned
+            if dj_raw >= (1 << 16):              # if bit 16 set, value is negative
+                dj_raw -= (1 << 17)              # two's-complement sign extension
+            delta_j.append(dj_raw)
             
         self.ax_j.clear()
-        self.ax_j.plot(j_plus, label='J+')
-        self.ax_j.plot(j_minus, label='J-', alpha=0.7)
+        self.ax_j.plot(j_plus,  label='J+', color='royalblue')
+        self.ax_j.plot(j_minus, label='J-', color='tomato', alpha=0.7)
         self.ax_j.set_title("Performance Metric (J) Convergence")
         self.ax_j.set_ylabel("ADC Counts")
         self.ax_j.legend()
         self.ax_j.grid(True)
-        
+
+        self.ax_dj.clear()
+        self.ax_dj.plot(delta_j, label='ΔJ (17-bit, correct)', color='mediumseagreen')
+        self.ax_dj.axhline(0, color='gray', linewidth=0.8, linestyle='--')
+        self.ax_dj.set_title("Gradient Signal (ΔJ = J+ − J−)")
+        self.ax_dj.set_ylabel("ADC Counts")
+        self.ax_dj.legend()
+        self.ax_dj.grid(True)
+
         self.ax_dac.clear()
         for i in range(8):
             self.ax_dac.plot(dacs[i], label=f'Ch {i}')
-        self.ax_dac.set_title("DAC Phase Trajectories")
+        self.ax_dac.set_title("DAC Phase Trajectories (Unperturbed u_reg)")
         self.ax_dac.set_xlabel("Iteration")
         self.ax_dac.set_ylabel("DAC Value (0-65535)")
-        # Put legend outside if too many
         self.ax_dac.legend(loc='upper right', bbox_to_anchor=(1.15, 1.0))
         self.ax_dac.grid(True)
-        
-        self.figure.tight_layout()
+
+        self.figure.tight_layout(pad=2.0)
         self.canvas.draw()
 
 

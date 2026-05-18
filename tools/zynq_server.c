@@ -293,8 +293,8 @@ static char *handle_read_fifo(json_object *req) {
     if (count <= 0 || count > 65536) {
         return make_error_response("Count must be between 1 and 65536");
     }
-    if (reg < 0 || reg > 1024) {
-        return make_error_response("Register index out of bounds");
+    if (reg < 0 || reg > 1023) {
+        return make_error_response("Register index out of bounds (0-1023)");
     }
 
     volatile uint32_t *regs = map_address(addr);

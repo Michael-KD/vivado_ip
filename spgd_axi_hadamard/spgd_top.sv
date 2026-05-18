@@ -148,14 +148,27 @@ module spgd_top #(
         end else if (commit_new_u && (!m_axis_tvalid || m_axis_tready)) begin
             // Only latch when the stream is idle or the current beat is being accepted.
             // Packs the UNPERTURBED baseline u_reg, not the jittered DAC output.
-            m_axis_tdata[127:0]   <= u_reg_flat;           // 8x16-bit unperturbed phases
+            // Packet layout (256 bits = 8 x 32-bit AXI-Lite reads):
+            //   [127:0]   u_reg_flat        8 x 16-bit unperturbed baseline phases
+            //   [143:128] j_plus_out[15:0]  ADC reading at u+du (16-bit signed, fits in 16b)
+            //   [159:144] j_minus_out[15:0] ADC reading at u-du (16-bit signed, fits in 16b)
+            //   [175:160] delta_j[15:0]     Lower 16 bits of 17-bit gradient
+            //   [191:176] scaled_update      gamma * delta_j >> 16 (one channel, indicative)
+            //   [207:192] epoch_count        Hadamard epoch counter
+            //   [215:208] {5'd0, row[2:0]}  Current Hadamard row index
+            //   [216]     delta_j[16]       MSB of 17-bit delta_j (overflow guard bit)
+            //             Needed because delta_j = j+ - j- can reach ±65535 which requires
+            //             17 bits; without this bit +40000 aliases to -25536 in Python.
+            //   [255:217] 39'd0             Reserved
+            m_axis_tdata[127:0]   <= u_reg_flat;
             m_axis_tdata[143:128] <= j_plus_out[15:0];
             m_axis_tdata[159:144] <= j_minus_out[15:0];
-            m_axis_tdata[175:160] <= delta_j_out[15:0];
+            m_axis_tdata[175:160] <= delta_j_out[15:0];   // lower 16 bits
             m_axis_tdata[191:176] <= scaled_update_out[15:0];
             m_axis_tdata[207:192] <= epoch_count;
             m_axis_tdata[215:208] <= {5'd0, current_row};
-            m_axis_tdata[255:216] <= 40'd0; // Reserved padding
+            m_axis_tdata[216]     <= delta_j_out[16];     // MSB — prevents aliasing for |dj|>32767
+            m_axis_tdata[255:217] <= 39'd0;               // Reserved
             m_axis_tvalid         <= 1'b1;
         end else if (m_axis_tready && m_axis_tvalid) begin
             // Clear valid once the FIFO has accepted the beat

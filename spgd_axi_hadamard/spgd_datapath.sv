@@ -66,10 +66,11 @@ module spgd_datapath #(
     // We calculate this ONCE globally to save DSP slices
     logic signed [63:0] global_step_size;
     
-    always_ff @(posedge clk) begin
-        if (trigger_dsp_update) begin
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            global_step_size <= '0;
+        else if (trigger_dsp_update)
             global_step_size <= gamma_lr * delta_j;
-        end
     end
 
     // Telemetry output assignments
@@ -84,7 +85,14 @@ module spgd_datapath #(
     // ==========================================
     // The baseline phase registers (u)
     logic [DAC_WIDTH-1:0] u_reg [NUM_CHANNELS];
-    
+
+    // v2pi_ext: combinational expansion of v2pi_counts to full DAC width.
+    // Declared at module scope (not inside always_ff) because Vivado does not
+    // reliably synthesize 'logic' variable declarations or blocking assignments
+    // inside always_ff blocks, especially within generate loops.
+    logic [DAC_WIDTH-1:0] v2pi_ext;
+    assign v2pi_ext = {{(DAC_WIDTH-12){1'b0}}, v2pi_counts};
+
     genvar i;
     generate
         for (i = 0; i < NUM_CHANNELS; i++) begin : gen_channel_alu
@@ -155,18 +163,13 @@ module spgd_datapath #(
                 end else if (soft_reset) begin
                     u_reg[i] <= {1'b1, {(DAC_WIDTH-1){1'b0}}}; // Reset to mid-scale
                 end else if (commit_new_u) begin
-                    // Apply modulo wrap if v2pi_counts != 0.
-                    // Use subtraction instead of % operator — Vivado cannot synthesize
-                    // a single-cycle variable-divisor modulo. Since next_u is already
-                    // clamped to [0, 2^DAC_WIDTH-1] and v2pi_ext represents one 2π cycle,
-                    // next_u can exceed v2pi_ext by at most one period, so one subtraction suffices.
-                    if (v2pi_counts != 0) begin
-                        logic [DAC_WIDTH-1:0] v2pi_ext;
-                        v2pi_ext = {{(DAC_WIDTH-12){1'b0}}, v2pi_counts};
-                        u_reg[i] <= (next_u >= v2pi_ext) ? (next_u - v2pi_ext) : next_u;
-                    end else begin
-                        u_reg[i] <= next_u;
-                    end
+                    // Apply v2pi phase wrap if enabled (v2pi_counts != 0).
+                    // v2pi_ext is a module-scope combinational wire (declared before the generate
+                    // block) to avoid local variable declarations and blocking assignments inside
+                    // always_ff, which are not reliably supported by Vivado synthesis.
+                    u_reg[i] <= (v2pi_counts != 0 && next_u >= v2pi_ext)
+                                ? (next_u - v2pi_ext)
+                                : next_u;
                 end
             end
             
