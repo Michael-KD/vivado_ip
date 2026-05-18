@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QFont
 
-VERSION = "2.3"
+VERSION = "3.0"
 
 
 def _reg_to_int(value: Any) -> int:
@@ -1647,6 +1647,117 @@ class CalibrationTab(QWidget):
                 self.stop_test()
             elif wrap_detected:
                 self.stop_test()
+        test_layout.addWidget(QFrame(), 4, 0, 1, 3)
+
+# =============================================================================
+# Telemetry Tab
+# =============================================================================
+
+class TelemetryTab(QWidget):
+    """Real-time plotting of AXI-Stream FIFO telemetry data."""
+    def __init__(self, client: ZynqClient):
+        super().__init__()
+        self.client = client
+        self.init_ui()
+        
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        
+        controls = QHBoxLayout()
+        self.capture_btn = QPushButton("Capture and Plot FIFO Data")
+        self.capture_btn.clicked.connect(self.capture_and_plot)
+        self.capture_btn.setToolTip("Pulls all data from the AXI-Stream FIFO and graphs it.")
+        controls.addWidget(self.capture_btn)
+        controls.addStretch()
+        layout.addLayout(controls)
+        
+        self.figure = Figure(figsize=(8, 6))
+        self.canvas = FigureCanvas(self.figure)
+        layout.addWidget(self.canvas)
+        
+        self.ax_j = self.figure.add_subplot(211)
+        self.ax_dac = self.figure.add_subplot(212)
+        self.figure.tight_layout()
+        
+    def capture_and_plot(self):
+        if not self.client.connected:
+            QMessageBox.warning(self, "Disconnected", "Not connected to Zynq server.")
+            return
+            
+        FIFO_ADDR = 0x43C00000
+        
+        occupancy_resp = self.client.send_command({"cmd":"read", "addr": FIFO_ADDR, "reg": 8})
+        if not occupancy_resp or occupancy_resp.get("status") != "ok":
+            QMessageBox.warning(self, "Error", "Could not read FIFO occupancy.")
+            return
+            
+        occupancy = occupancy_resp.get("value", 0)
+        if occupancy == 0:
+            QMessageBox.information(self, "Empty", "No telemetry data available in FIFO.")
+            return
+            
+        data = self.client.read_fifo(FIFO_ADDR, 9, occupancy)
+        if not data:
+            QMessageBox.warning(self, "Error", "Failed to read data from FIFO.")
+            return
+            
+        # Parse 256-bit packets (8 x 32-bit words per packet)
+        num_packets = len(data) // 8
+        if num_packets == 0:
+            QMessageBox.warning(self, "Error", "Not enough data for a full packet.")
+            return
+            
+        j_plus = []
+        j_minus = []
+        dacs = [[] for _ in range(8)]
+        
+        for i in range(num_packets):
+            idx = i * 8
+            w0 = data[idx]
+            w1 = data[idx+1]
+            w2 = data[idx+2]
+            w3 = data[idx+3]
+            w4 = data[idx+4]
+            
+            # DACs
+            dacs[0].append(w0 & 0xFFFF)
+            dacs[1].append((w0 >> 16) & 0xFFFF)
+            dacs[2].append(w1 & 0xFFFF)
+            dacs[3].append((w1 >> 16) & 0xFFFF)
+            dacs[4].append(w2 & 0xFFFF)
+            dacs[5].append((w2 >> 16) & 0xFFFF)
+            dacs[6].append(w3 & 0xFFFF)
+            dacs[7].append((w3 >> 16) & 0xFFFF)
+            
+            # J values (16-bit signed)
+            jp = w4 & 0xFFFF
+            jm = (w4 >> 16) & 0xFFFF
+            if jp >= 0x8000: jp -= 0x10000
+            if jm >= 0x8000: jm -= 0x10000
+            
+            j_plus.append(jp)
+            j_minus.append(jm)
+            
+        self.ax_j.clear()
+        self.ax_j.plot(j_plus, label='J+')
+        self.ax_j.plot(j_minus, label='J-', alpha=0.7)
+        self.ax_j.set_title("Performance Metric (J) Convergence")
+        self.ax_j.set_ylabel("ADC Counts")
+        self.ax_j.legend()
+        self.ax_j.grid(True)
+        
+        self.ax_dac.clear()
+        for i in range(8):
+            self.ax_dac.plot(dacs[i], label=f'Ch {i}')
+        self.ax_dac.set_title("DAC Phase Trajectories")
+        self.ax_dac.set_xlabel("Iteration")
+        self.ax_dac.set_ylabel("DAC Value (0-65535)")
+        # Put legend outside if too many
+        self.ax_dac.legend(loc='upper right', bbox_to_anchor=(1.15, 1.0))
+        self.ax_dac.grid(True)
+        
+        self.figure.tight_layout()
+        self.canvas.draw()
 
 
 # =============================================================================
@@ -1725,6 +1836,9 @@ class MainWindow(QMainWindow):
             refresh_now=self.poll_data,
         )
         self.tabs.addTab(self.cal_tab, "Calibrate / Test")
+        
+        self.telemetry_tab = TelemetryTab(self.client)
+        self.tabs.addTab(self.telemetry_tab, "Telemetry Graphs")
             
         layout.addWidget(self.tabs)
         
