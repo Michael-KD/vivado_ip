@@ -101,6 +101,9 @@ module spgd_top #(
     logic signed [ADC_WIDTH:0] j_minus_out;
     logic signed [ADC_WIDTH:0] delta_j_out;
     logic signed [DAC_WIDTH-1:0] scaled_update_out;
+    // Unperturbed baseline phases from datapath (what the algorithm converged to,
+    // NOT the jittered DAC output which is u±du depending on FSM state)
+    logic [(NUM_CHANNELS*DAC_WIDTH)-1:0] u_reg_flat;
 
     // Datapath
     spgd_datapath #(
@@ -125,28 +128,41 @@ module spgd_top #(
         .j_plus_out         (j_plus_out),
         .j_minus_out        (j_minus_out),
         .delta_j_out        (delta_j_out),
-        .scaled_update_out  (scaled_update_out)
+        .scaled_update_out  (scaled_update_out),
+        .u_reg_flat_out     (u_reg_flat)
     );
 
     // ==========================================
-    // AXI-Stream Telemetry Packing
+    // AXI-Stream Telemetry Packing — Registered Handshake
     // ==========================================
-    // Pack all important debug state into the 256-bit wide stream.
-    // Ensure signs are extended/padded to 16 bits.
-    always_comb begin
-        m_axis_tdata[127:0]   = internal_dac_flat;
-        m_axis_tdata[143:128] = j_plus_out[15:0];
-        m_axis_tdata[159:144] = j_minus_out[15:0];
-        m_axis_tdata[175:160] = delta_j_out[15:0];
-        m_axis_tdata[191:176] = scaled_update_out[15:0];
-        m_axis_tdata[207:192] = epoch_count;
-        m_axis_tdata[215:208] = {5'd0, current_row};
-        m_axis_tdata[255:216] = 40'd0; // Reserved padding
+    // tvalid is held high until tready is asserted (standard AXI-Stream handshake).
+    // The guard condition `!m_axis_tvalid || m_axis_tready` ensures tdata is only
+    // updated when the bus is idle OR a handshake is completing this cycle —
+    // never while a beat is stalled waiting for tready (which would violate AXI-Stream).
+    // New packets that arrive during backpressure are dropped (acceptable: the FIFO
+    // downstream should almost never be full during normal operation).
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            m_axis_tvalid <= 1'b0;
+            m_axis_tdata  <= '0;
+        end else if (commit_new_u && (!m_axis_tvalid || m_axis_tready)) begin
+            // Only latch when the stream is idle or the current beat is being accepted.
+            // Packs the UNPERTURBED baseline u_reg, not the jittered DAC output.
+            m_axis_tdata[127:0]   <= u_reg_flat;           // 8x16-bit unperturbed phases
+            m_axis_tdata[143:128] <= j_plus_out[15:0];
+            m_axis_tdata[159:144] <= j_minus_out[15:0];
+            m_axis_tdata[175:160] <= delta_j_out[15:0];
+            m_axis_tdata[191:176] <= scaled_update_out[15:0];
+            m_axis_tdata[207:192] <= epoch_count;
+            m_axis_tdata[215:208] <= {5'd0, current_row};
+            m_axis_tdata[255:216] <= 40'd0; // Reserved padding
+            m_axis_tvalid         <= 1'b1;
+        end else if (m_axis_tready && m_axis_tvalid) begin
+            // Clear valid once the FIFO has accepted the beat
+            m_axis_tvalid <= 1'b0;
+        end
     end
 
-    // Push the telemetry packet downstream exactly once per iteration,
-    // right when the new phase vector u is committed.
-    assign m_axis_tvalid = commit_new_u;
-    assign m_axis_tlast  = 1'b0; // Not using packet boundaries
+    assign m_axis_tlast = 1'b0; // Not using packet frame boundaries
 
 endmodule

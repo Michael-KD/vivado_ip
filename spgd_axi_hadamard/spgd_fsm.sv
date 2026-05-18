@@ -52,9 +52,6 @@ module spgd_fsm (
         if (!rst_n) begin
             current_state <= IDLE;
             wait_counter  <= 16'd0;
-            cycle_counter <= '0;
-            ms_counter    <= '0;
-            auto_reset_pulse <= 1'b0;
         end else begin
             current_state <= next_state;
             

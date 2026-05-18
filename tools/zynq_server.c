@@ -258,8 +258,8 @@ static char *handle_read(json_object *req) {
     uint32_t addr = (uint32_t)json_object_get_int64(addr_item);
     int reg = json_object_get_int(reg_item);
 
-    if (reg < 0 || reg > 3) {
-        return make_error_response("Register index must be 0-3");
+    if (reg < 0 || reg > 1023) {
+        return make_error_response("Register index out of bounds (0-1023)");
     }
 
     volatile uint32_t *regs = map_address(addr);

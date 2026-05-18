@@ -1,7 +1,7 @@
 
 `timescale 1 ns / 1 ps
 
-	module spgd_axi_v1_0 #
+	module spgd_axi_hadamard_v1_0 #
 	(
 		// Users to add parameters here
 		parameter integer NUM_CHANNELS = 8,

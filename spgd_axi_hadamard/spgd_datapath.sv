@@ -29,7 +29,15 @@ module spgd_datapath #(
     input  logic [ADC_WIDTH-1:0] adc_data_in,
     output logic [DAC_WIDTH-1:0] dac_data_out [NUM_CHANNELS], // unpacked array of 8 DAC values
     // V2PI threshold in DAC counts (12-bit: 0 disables wrap, 1..4096 = counts)
-    input  logic [11:0] v2pi_counts
+    input  logic [11:0] v2pi_counts,
+
+    // Telemetry Outputs (for AXI-Stream packing in spgd_top)
+    output logic signed [ADC_WIDTH:0]   j_plus_out,
+    output logic signed [ADC_WIDTH:0]   j_minus_out,
+    output logic signed [ADC_WIDTH:0]   delta_j_out,
+    output logic signed [DAC_WIDTH-1:0] scaled_update_out,
+    // Flattened unperturbed baseline phases — logged in telemetry, NOT the jittered DAC output
+    output logic [(NUM_CHANNELS*DAC_WIDTH)-1:0] u_reg_flat_out
 );
 
     // ==========================================
@@ -63,6 +71,13 @@ module spgd_datapath #(
             global_step_size <= gamma_lr * delta_j;
         end
     end
+
+    // Telemetry output assignments
+    assign j_plus_out       = j_plus_reg;
+    assign j_minus_out      = j_minus_reg;
+    assign delta_j_out      = delta_j;
+    // scaled_update is global_step_size[31:16] for all channels — expose from module level
+    assign scaled_update_out = global_step_size[31:16];
 
     // ==========================================
     // Parallel Per-Channel ALUs & Registers
@@ -140,17 +155,29 @@ module spgd_datapath #(
                 end else if (soft_reset) begin
                     u_reg[i] <= {1'b1, {(DAC_WIDTH-1){1'b0}}}; // Reset to mid-scale
                 end else if (commit_new_u) begin
-                    // Apply modulo wrap if v2pi_counts != 0 (extend to DAC width)
+                    // Apply modulo wrap if v2pi_counts != 0.
+                    // Use subtraction instead of % operator — Vivado cannot synthesize
+                    // a single-cycle variable-divisor modulo. Since next_u is already
+                    // clamped to [0, 2^DAC_WIDTH-1] and v2pi_ext represents one 2π cycle,
+                    // next_u can exceed v2pi_ext by at most one period, so one subtraction suffices.
                     if (v2pi_counts != 0) begin
                         logic [DAC_WIDTH-1:0] v2pi_ext;
                         v2pi_ext = {{(DAC_WIDTH-12){1'b0}}, v2pi_counts};
-                        u_reg[i] <= next_u % v2pi_ext;
+                        u_reg[i] <= (next_u >= v2pi_ext) ? (next_u - v2pi_ext) : next_u;
                     end else begin
                         u_reg[i] <= next_u;
                     end
                 end
             end
             
+        end
+    endgenerate
+
+    // Flatten u_reg for telemetry output (unperturbed baseline phases)
+    genvar j;
+    generate
+        for (j = 0; j < NUM_CHANNELS; j++) begin : gen_u_flat
+            assign u_reg_flat_out[(j*DAC_WIDTH) +: DAC_WIDTH] = u_reg[j];
         end
     endgenerate
 

@@ -195,15 +195,25 @@ class ZynqClient:
         
     def read_fifo(self, addr: int, reg: int, count: int) -> Optional[list]:
         """Read a continuous burst of data from a single register (like an AXI-Stream FIFO)."""
-        resp = self.send_command({
-            "cmd": "read_fifo",
-            "addr": addr,
-            "reg": reg,
-            "count": count
-        })
-        if resp is not None and resp.get("status") == "ok":
-            return resp.get("data")
-        return None
+        # Use a longer dynamic timeout: server must serialize potentially thousands of JSON ints.
+        # Baseline 15 s plus 2 ms per word handles up to ~32k-word captures safely.
+        old_timeout = self.sock.gettimeout() if self.sock else 5.0
+        dyn_timeout = max(15.0, count * 0.002)
+        if self.sock:
+            self.sock.settimeout(dyn_timeout)
+        try:
+            resp = self.send_command({
+                "cmd": "read_fifo",
+                "addr": addr,
+                "reg": reg,
+                "count": count
+            })
+            if resp is not None and resp.get("status") == "ok":
+                return resp.get("data")
+            return None
+        finally:
+            if self.sock:
+                self.sock.settimeout(old_timeout)
 
 
 # =============================================================================
@@ -308,6 +318,20 @@ class MasterTab(QWidget):
         spgd_layout.addWidget(self.spgd_v2pi_spin, 6, 1)
         self.spgd_v2pi_voltage_label = QLabel(f"{(3277/4096.0)*4.0:.3f} V")
         spgd_layout.addWidget(self.spgd_v2pi_voltage_label, 6, 2)
+
+        # Epoch bit select — controls which epoch counter bit selects the Hadamard sign flip
+        # Lives in slv_reg3[15:12]; must be preserved when writing v2pi or auto-reset period.
+        self.spgd_epoch_spin = QSpinBox()
+        self.spgd_epoch_spin.setRange(0, 15)
+        self.spgd_epoch_spin.setValue(0)
+        self.spgd_epoch_spin.valueChanged.connect(self.on_epoch_bit_select)
+        self.spgd_epoch_spin.setToolTip(
+            "Hadamard epoch bit select (slv_reg3[15:12]).\n"
+            "Picks which bit of the epoch counter flips the Hadamard row signs.\n"
+            "0 = flip every 8 iters, 1 = every 16 iters, etc. (0 = no flip)"
+        )
+        spgd_layout.addWidget(QLabel("Epoch Bit Sel:"), 7, 0)
+        spgd_layout.addWidget(self.spgd_epoch_spin, 7, 1)
         layout.addWidget(spgd_group)
         
         # --- Master DAC Control ---
@@ -392,29 +416,29 @@ class MasterTab(QWidget):
         if not self.client.connected:
             QMessageBox.warning(self, "Disconnected", "Not connected to Zynq server.")
             return
-            
-        # Assuming the FIFO is at 0x43C00000 (standard first AXI Lite IP address)
-        # In a real setup, this address should be passed in or configurable.
-        FIFO_ADDR = 0x43C00000
-        
-        # Read the occupancy (RDFO is at offset 0x20, which is reg 8)
-        # Note: Depending on Vivado configuration, this could be different.
-        occupancy_resp = self.client.send_command({"cmd":"read", "addr": FIFO_ADDR, "reg": 8})
+
+        FIFO_ADDR = 0x43C00000  # Update to match your Vivado block design address
+
+        # RDFO (Receive Data FIFO Occupancy) is at AXI-Lite offset 0xA4 -> reg index 41
+        # Reports the number of 256-bit packets available (per PG080).
+        occupancy_resp = self.client.send_command({"cmd": "read", "addr": FIFO_ADDR, "reg": 41})
         if not occupancy_resp or occupancy_resp.get("status") != "ok":
-            QMessageBox.warning(self, "FIFO Error", "Could not read FIFO occupancy. Is it configured at 0x43C00000?")
+            QMessageBox.warning(self, "FIFO Error", "Could not read FIFO occupancy. Is the FIFO at 0x43C00000?")
             return
-            
+
         occupancy = occupancy_resp.get("value", 0)
         if occupancy == 0:
             QMessageBox.information(self, "FIFO Empty", "No telemetry data available in FIFO.")
             return
-            
-        # Read the data (RDFD is at offset 0x24, which is reg 9)
-        data = self.client.read_fifo(FIFO_ADDR, 9, occupancy)
+
+        # RDFD (Receive Data FIFO Data) is at AXI-Lite offset 0xA8 -> reg index 42
+        # Each 256-bit packet requires 8 sequential 32-bit reads from RDFD.
+        word_count = occupancy * 8
+        data = self.client.read_fifo(FIFO_ADDR, 42, word_count)
         if not data:
             QMessageBox.warning(self, "FIFO Error", "Failed to read data from FIFO.")
             return
-            
+
         # Save to CSV
         import csv
         import time
@@ -425,7 +449,10 @@ class MasterTab(QWidget):
                 writer.writerow(["WordIndex", "RawValue"])
                 for i, val in enumerate(data):
                     writer.writerow([i, val])
-            QMessageBox.information(self, "Capture Success", f"Captured {occupancy} words.\nSaved to {filename}")
+            QMessageBox.information(
+                self, "Capture Success",
+                f"Captured {occupancy} packets ({word_count} words).\nSaved to {filename}"
+            )
         except Exception as e:
             QMessageBox.warning(self, "Save Error", f"Failed to save CSV: {e}")
 
@@ -439,18 +466,27 @@ class MasterTab(QWidget):
             self.client.write_reg(self.spgd_addr, 0, ctrl)
             self.spgd_ctrl = ctrl
 
+    def _build_reg3(self) -> int:
+        """Assemble slv_reg3 from all three fields, preserving epoch_bit_select."""
+        period = self.spgd_period_spin.value() & 0xFFFF
+        epoch  = self.spgd_epoch_spin.value() & 0x0F
+        v2pi   = self.spgd_v2pi_spin.value() & 0x0FFF
+        return (period << 16) | (epoch << 12) | v2pi
+
     def on_spgd_period(self, value):
         if self.client.connected:
-            reg3 = (value << 16) | (self.spgd_v2pi_spin.value() & 0x0FFF)
-            self.client.write_reg(self.spgd_addr, 3, reg3)
+            self.client.write_reg(self.spgd_addr, 3, self._build_reg3())
 
     def on_spgd_v2pi(self, value):
-        # update register and show voltage conversion (0-4V range)
+        # Update register and show voltage conversion (0-4V range)
         if self.client.connected:
-            reg3 = (self.spgd_period_spin.value() << 16) | (value & 0x0FFF)
-            self.client.write_reg(self.spgd_addr, 3, reg3)
+            self.client.write_reg(self.spgd_addr, 3, self._build_reg3())
         voltage = (value / 4096.0) * 4.0
         self.spgd_v2pi_voltage_label.setText(f"{voltage:.3f} V")
+
+    def on_epoch_bit_select(self, value):
+        if self.client.connected:
+            self.client.write_reg(self.spgd_addr, 3, self._build_reg3())
 
     def on_master_dac_slider(self, val):
         self.master_dac_spin.blockSignals(True)
@@ -496,9 +532,10 @@ class MasterTab(QWidget):
             self.spgd_gamma_spin.blockSignals(True)
             self.spgd_gamma_spin.setValue(gamma)
             self.spgd_gamma_spin.blockSignals(False)
-            # reg3 contains auto-reset period (high 16) and v2pi counts (low 16)
+            # reg3 layout: [31:16] auto_reset_period_ms | [15:12] epoch_bit_select | [11:0] v2pi_counts
             reg3 = int(spgd_d.get("3", 0))
-            v2pi = reg3 & 0x0FFF
+            v2pi   = reg3 & 0x0FFF
+            epoch  = (reg3 >> 12) & 0x0F
             period = (reg3 >> 16) & 0xFFFF
 
             self.spgd_auto_reset_cb.blockSignals(True)
@@ -515,6 +552,10 @@ class MasterTab(QWidget):
             # update voltage label (12-bit scale -> 4096 = 4V)
             v_voltage = (v2pi / 4096.0) * 4.0
             self.spgd_v2pi_voltage_label.setText(f"{v_voltage:.3f} V")
+
+            self.spgd_epoch_spin.blockSignals(True)
+            self.spgd_epoch_spin.setValue(epoch)
+            self.spgd_epoch_spin.blockSignals(False)
             
         # Update ADC Overview
         adc_texts = []
@@ -1684,19 +1725,22 @@ class TelemetryTab(QWidget):
             QMessageBox.warning(self, "Disconnected", "Not connected to Zynq server.")
             return
             
-        FIFO_ADDR = 0x43C00000
-        
-        occupancy_resp = self.client.send_command({"cmd":"read", "addr": FIFO_ADDR, "reg": 8})
+        FIFO_ADDR = 0x43C00000  # Update to match your Vivado block design address
+
+        # RDFO at AXI-Lite offset 0xA4 -> reg 41; reports number of 256-bit packets (PG080)
+        occupancy_resp = self.client.send_command({"cmd": "read", "addr": FIFO_ADDR, "reg": 41})
         if not occupancy_resp or occupancy_resp.get("status") != "ok":
             QMessageBox.warning(self, "Error", "Could not read FIFO occupancy.")
             return
-            
+
         occupancy = occupancy_resp.get("value", 0)
         if occupancy == 0:
             QMessageBox.information(self, "Empty", "No telemetry data available in FIFO.")
             return
-            
-        data = self.client.read_fifo(FIFO_ADDR, 9, occupancy)
+
+        # RDFD at AXI-Lite offset 0xA8 -> reg 42; each 256-bit packet = 8 x 32-bit reads
+        word_count = occupancy * 8
+        data = self.client.read_fifo(FIFO_ADDR, 42, word_count)
         if not data:
             QMessageBox.warning(self, "Error", "Failed to read data from FIFO.")
             return
@@ -1704,9 +1748,10 @@ class TelemetryTab(QWidget):
         # Parse 256-bit packets (8 x 32-bit words per packet)
         num_packets = len(data) // 8
         if num_packets == 0:
-            QMessageBox.warning(self, "Error", "Not enough data for a full packet.")
+            QMessageBox.warning(self, "Error", f"Got {len(data)} words — not enough for a full 256-bit packet (need 8).")
             return
-            
+
+
         j_plus = []
         j_minus = []
         dacs = [[] for _ in range(8)]
