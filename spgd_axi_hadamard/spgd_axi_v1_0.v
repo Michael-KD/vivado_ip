@@ -19,6 +19,12 @@
 		// Users to add ports here
 		input wire [ADC_WIDTH-1 : 0] adc_data_in,
 		output wire [(NUM_CHANNELS*DAC_WIDTH)-1 : 0] dac_data_out,
+		
+		// AXI-Stream Telemetry Logging Output (256-bit)
+		output wire [255:0] m_axis_tdata,
+		output wire         m_axis_tvalid,
+		input  wire         m_axis_tready,
+		output wire         m_axis_tlast,
 		// User ports ends
 		// Do not modify the ports beyond this line
 
@@ -56,6 +62,10 @@
 	) spgd_axi_v1_0_S00_AXI_inst (
 		.adc_data_in(adc_data_in),
 		.dac_data_out(dac_data_out),
+		.m_axis_tdata(m_axis_tdata),
+		.m_axis_tvalid(m_axis_tvalid),
+		.m_axis_tready(m_axis_tready),
+		.m_axis_tlast(m_axis_tlast),
 		.S_AXI_ACLK(s00_axi_aclk),
 		.S_AXI_ARESETN(s00_axi_aresetn),
 		.S_AXI_AWADDR(s00_axi_awaddr),

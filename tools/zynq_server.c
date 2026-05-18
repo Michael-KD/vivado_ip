@@ -275,6 +275,56 @@ static char *handle_read(json_object *req) {
     return make_read_response(value);
 }
 
+static char *handle_read_fifo(json_object *req) {
+    json_object *addr_item = NULL;
+    json_object *reg_item = NULL;
+    json_object *count_item = NULL;
+
+    if (!json_object_object_get_ex(req, "addr", &addr_item) ||
+        !json_object_object_get_ex(req, "reg", &reg_item) ||
+        !json_object_object_get_ex(req, "count", &count_item)) {
+        return make_error_response("Missing 'addr', 'reg', or 'count'");
+    }
+
+    uint32_t addr = (uint32_t)json_object_get_int64(addr_item);
+    int reg = json_object_get_int(reg_item);
+    int count = json_object_get_int(count_item);
+
+    if (count <= 0 || count > 65536) {
+        return make_error_response("Count must be between 1 and 65536");
+    }
+    if (reg < 0 || reg > 1024) {
+        return make_error_response("Register index out of bounds");
+    }
+
+    volatile uint32_t *regs = map_address(addr);
+    if (!regs) {
+        return make_error_response("Failed to map address");
+    }
+
+    json_object *resp = json_object_new_object();
+    json_object_object_add(resp, "status", json_object_new_string("ok"));
+    
+    json_object *data_array = json_object_new_array();
+    
+    // Read the exact same register 'count' times
+    for (int i = 0; i < count; i++) {
+        uint32_t value = 0;
+        if (safe_read_reg(regs, reg, &value) != 0) {
+            json_object_put(data_array);
+            json_object_put(resp);
+            return make_error_response("Bus fault while reading FIFO");
+        }
+        json_object_array_add(data_array, json_object_new_int64(value));
+    }
+    
+    json_object_object_add(resp, "data", data_array);
+    const char *json_str = json_object_to_json_string(resp);
+    char *str = strdup(json_str);
+    json_object_put(resp);
+    return str;
+}
+
 static char *handle_write(json_object *req) {
     json_object *addr_item = NULL;
     json_object *reg_item = NULL;
@@ -378,6 +428,8 @@ static char *process_request(const char *json_str) {
         response = handle_read_all(req);
     } else if (strcmp(cmd, "read") == 0) {
         response = handle_read(req);
+    } else if (strcmp(cmd, "read_fifo") == 0) {
+        response = handle_read_fifo(req);
     } else if (strcmp(cmd, "write") == 0) {
         response = handle_write(req);
     } else if (strcmp(cmd, "pulse") == 0) {

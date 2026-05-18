@@ -192,6 +192,18 @@ class ZynqClient:
             "bit": bit
         })
         return resp is not None and resp.get("status") == "ok"
+        
+    def read_fifo(self, addr: int, reg: int, count: int) -> Optional[list]:
+        """Read a continuous burst of data from a single register (like an AXI-Stream FIFO)."""
+        resp = self.send_command({
+            "cmd": "read_fifo",
+            "addr": addr,
+            "reg": reg,
+            "count": count
+        })
+        if resp is not None and resp.get("status") == "ok":
+            return resp.get("data")
+        return None
 
 
 # =============================================================================
@@ -264,7 +276,12 @@ class MasterTab(QWidget):
         self.spgd_reset_btn = QPushButton("Pulse Manual Reset")
         self.spgd_reset_btn.clicked.connect(self.on_spgd_reset)
         self.spgd_reset_btn.setToolTip("Pulse control bit 2 for one-shot SPGD soft reset.")
-        spgd_layout.addWidget(self.spgd_reset_btn, 4, 0, 1, 2)
+        spgd_layout.addWidget(self.spgd_reset_btn, 4, 0)
+        
+        self.capture_btn = QPushButton("Capture Telemetry")
+        self.capture_btn.clicked.connect(self.on_capture_telemetry)
+        self.capture_btn.setToolTip("Reads AXI-Stream telemetry data from the FIFO and saves to CSV.")
+        spgd_layout.addWidget(self.capture_btn, 4, 1)
 
         # Auto-reset controls
         self.spgd_auto_reset_cb = QCheckBox("Auto-Reset Enable")
@@ -370,6 +387,47 @@ class MasterTab(QWidget):
     def on_spgd_reset(self):
         if self.client.connected:
             self.client.pulse_bit(self.spgd_addr, 2)
+
+    def on_capture_telemetry(self):
+        if not self.client.connected:
+            QMessageBox.warning(self, "Disconnected", "Not connected to Zynq server.")
+            return
+            
+        # Assuming the FIFO is at 0x43C00000 (standard first AXI Lite IP address)
+        # In a real setup, this address should be passed in or configurable.
+        FIFO_ADDR = 0x43C00000
+        
+        # Read the occupancy (RDFO is at offset 0x20, which is reg 8)
+        # Note: Depending on Vivado configuration, this could be different.
+        occupancy_resp = self.client.send_command({"cmd":"read", "addr": FIFO_ADDR, "reg": 8})
+        if not occupancy_resp or occupancy_resp.get("status") != "ok":
+            QMessageBox.warning(self, "FIFO Error", "Could not read FIFO occupancy. Is it configured at 0x43C00000?")
+            return
+            
+        occupancy = occupancy_resp.get("value", 0)
+        if occupancy == 0:
+            QMessageBox.information(self, "FIFO Empty", "No telemetry data available in FIFO.")
+            return
+            
+        # Read the data (RDFD is at offset 0x24, which is reg 9)
+        data = self.client.read_fifo(FIFO_ADDR, 9, occupancy)
+        if not data:
+            QMessageBox.warning(self, "FIFO Error", "Failed to read data from FIFO.")
+            return
+            
+        # Save to CSV
+        import csv
+        import time
+        filename = f"spgd_telemetry_{int(time.time())}.csv"
+        try:
+            with open(filename, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(["WordIndex", "RawValue"])
+                for i, val in enumerate(data):
+                    writer.writerow([i, val])
+            QMessageBox.information(self, "Capture Success", f"Captured {occupancy} words.\nSaved to {filename}")
+        except Exception as e:
+            QMessageBox.warning(self, "Save Error", f"Failed to save CSV: {e}")
 
     def on_spgd_auto_reset(self, state):
         if self.client.connected:
