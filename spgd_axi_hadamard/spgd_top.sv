@@ -176,6 +176,10 @@ module spgd_top #(
         end
     end
 
-    assign m_axis_tlast = 1'b0; // Not using packet frame boundaries
+    // Every 256-bit beat is a single complete packet, so TLAST is always 1.
+    // This is required for axi_fifo_mm_s: RDFO is only updated when the FIFO
+    // sees TLAST on the stream, so TLAST=0 would leave RDFO permanently 0.
+    // The axis_dwidth_converter propagates this TLAST to the 8th 32-bit output beat.
+    assign m_axis_tlast = 1'b1;
 
 endmodule

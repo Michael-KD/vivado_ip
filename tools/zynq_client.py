@@ -195,25 +195,15 @@ class ZynqClient:
         
     def read_fifo(self, addr: int, reg: int, count: int) -> Optional[list]:
         """Read a continuous burst of data from a single register (like an AXI-Stream FIFO)."""
-        # Use a longer dynamic timeout: server must serialize potentially thousands of JSON ints.
-        # Baseline 15 s plus 2 ms per word handles up to ~32k-word captures safely.
-        old_timeout = self.sock.gettimeout() if self.sock else 5.0
-        dyn_timeout = max(15.0, count * 0.002)
-        if self.sock:
-            self.sock.settimeout(dyn_timeout)
-        try:
-            resp = self.send_command({
-                "cmd": "read_fifo",
-                "addr": addr,
-                "reg": reg,
-                "count": count
-            })
-            if resp is not None and resp.get("status") == "ok":
-                return resp.get("data")
-            return None
-        finally:
-            if self.sock:
-                self.sock.settimeout(old_timeout)
+        resp = self.send_command({
+            "cmd": "read_fifo",
+            "addr": addr,
+            "reg": reg,
+            "count": count
+        })
+        if resp is not None and resp.get("status") == "ok":
+            return resp.get("data")
+        return None
 
 
 # =============================================================================
@@ -318,20 +308,6 @@ class MasterTab(QWidget):
         spgd_layout.addWidget(self.spgd_v2pi_spin, 6, 1)
         self.spgd_v2pi_voltage_label = QLabel(f"{(3277/4096.0)*4.0:.3f} V")
         spgd_layout.addWidget(self.spgd_v2pi_voltage_label, 6, 2)
-
-        # Epoch bit select — controls which epoch counter bit selects the Hadamard sign flip
-        # Lives in slv_reg3[15:12]; must be preserved when writing v2pi or auto-reset period.
-        self.spgd_epoch_spin = QSpinBox()
-        self.spgd_epoch_spin.setRange(0, 15)
-        self.spgd_epoch_spin.setValue(0)
-        self.spgd_epoch_spin.valueChanged.connect(self.on_epoch_bit_select)
-        self.spgd_epoch_spin.setToolTip(
-            "Hadamard epoch bit select (slv_reg3[15:12]).\n"
-            "Picks which bit of the epoch counter flips the Hadamard row signs.\n"
-            "0 = flip every 8 iters, 1 = every 16 iters, etc. (0 = no flip)"
-        )
-        spgd_layout.addWidget(QLabel("Epoch Bit Sel:"), 7, 0)
-        spgd_layout.addWidget(self.spgd_epoch_spin, 7, 1)
         layout.addWidget(spgd_group)
         
         # --- Master DAC Control ---
@@ -417,13 +393,16 @@ class MasterTab(QWidget):
             QMessageBox.warning(self, "Disconnected", "Not connected to Zynq server.")
             return
 
-        FIFO_ADDR = 0x43C00000  # Update to match your Vivado block design address
+        # Address of the axi_fifo_mm_s IP — update if Vivado assigns a different address.
+        FIFO_ADDR = 0x43C00000
 
-        # RDFO (Receive Data FIFO Occupancy) is at AXI-Lite offset 0xA4 -> reg index 41
-        # Reports the number of 256-bit packets available (per PG080).
+        # RDFO: Receive Data FIFO Occupancy — AXI-Lite offset 0xA4 = reg 41 (PG080 Table 3-6).
+        # With axis_dwidth_converter (256→32) upstream, the FIFO stores 32-bit words,
+        # so RDFO reports the total number of 32-bit words (8 per 256-bit packet).
         occupancy_resp = self.client.send_command({"cmd": "read", "addr": FIFO_ADDR, "reg": 41})
         if not occupancy_resp or occupancy_resp.get("status") != "ok":
-            QMessageBox.warning(self, "FIFO Error", "Could not read FIFO occupancy. Is the FIFO at 0x43C00000?")
+            QMessageBox.warning(self, "FIFO Error", "Could not read FIFO occupancy (reg 41). "
+                                "Check that the FIFO is mapped at 0x43C00000.")
             return
 
         occupancy = occupancy_resp.get("value", 0)
@@ -431,30 +410,31 @@ class MasterTab(QWidget):
             QMessageBox.information(self, "FIFO Empty", "No telemetry data available in FIFO.")
             return
 
-        # RDFD (Receive Data FIFO Data) is at AXI-Lite offset 0xA8 -> reg index 42
-        # Each 256-bit packet requires 8 sequential 32-bit reads from RDFD.
-        word_count = occupancy * 8
-        data = self.client.read_fifo(FIFO_ADDR, 42, word_count)
+        # RDFD: Receive Data FIFO Data — AXI-Lite offset 0xA8 = reg 42.
+        # Read all 32-bit words; each group of 8 words is one 256-bit telemetry packet.
+        data = self.client.read_fifo(FIFO_ADDR, 42, occupancy)
         if not data:
             QMessageBox.warning(self, "FIFO Error", "Failed to read data from FIFO.")
             return
 
-        # Save to CSV
+        # Save raw 32-bit words to CSV — 8 consecutive words = 1 packet.
         import csv
         import time
         filename = f"spgd_telemetry_{int(time.time())}.csv"
         try:
             with open(filename, 'w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow(["WordIndex", "RawValue"])
+                writer.writerow(["WordIndex", "PacketIndex", "WordInPacket", "RawValue"])
                 for i, val in enumerate(data):
-                    writer.writerow([i, val])
+                    writer.writerow([i, i // 8, i % 8, val])
+            num_packets = occupancy // 8
             QMessageBox.information(
                 self, "Capture Success",
-                f"Captured {occupancy} packets ({word_count} words).\nSaved to {filename}"
+                f"Captured {num_packets} packets ({occupancy} 32-bit words).\nSaved to {filename}"
             )
         except Exception as e:
             QMessageBox.warning(self, "Save Error", f"Failed to save CSV: {e}")
+
 
     def on_spgd_auto_reset(self, state):
         if self.client.connected:
@@ -466,27 +446,18 @@ class MasterTab(QWidget):
             self.client.write_reg(self.spgd_addr, 0, ctrl)
             self.spgd_ctrl = ctrl
 
-    def _build_reg3(self) -> int:
-        """Assemble slv_reg3 from all three fields, preserving epoch_bit_select."""
-        period = self.spgd_period_spin.value() & 0xFFFF
-        epoch  = self.spgd_epoch_spin.value() & 0x0F
-        v2pi   = self.spgd_v2pi_spin.value() & 0x0FFF
-        return (period << 16) | (epoch << 12) | v2pi
-
     def on_spgd_period(self, value):
         if self.client.connected:
-            self.client.write_reg(self.spgd_addr, 3, self._build_reg3())
+            reg3 = (value << 16) | (self.spgd_v2pi_spin.value() & 0x0FFF)
+            self.client.write_reg(self.spgd_addr, 3, reg3)
 
     def on_spgd_v2pi(self, value):
-        # Update register and show voltage conversion (0-4V range)
+        # update register and show voltage conversion (0-4V range)
         if self.client.connected:
-            self.client.write_reg(self.spgd_addr, 3, self._build_reg3())
+            reg3 = (self.spgd_period_spin.value() << 16) | (value & 0x0FFF)
+            self.client.write_reg(self.spgd_addr, 3, reg3)
         voltage = (value / 4096.0) * 4.0
         self.spgd_v2pi_voltage_label.setText(f"{voltage:.3f} V")
-
-    def on_epoch_bit_select(self, value):
-        if self.client.connected:
-            self.client.write_reg(self.spgd_addr, 3, self._build_reg3())
 
     def on_master_dac_slider(self, val):
         self.master_dac_spin.blockSignals(True)
@@ -532,10 +503,9 @@ class MasterTab(QWidget):
             self.spgd_gamma_spin.blockSignals(True)
             self.spgd_gamma_spin.setValue(gamma)
             self.spgd_gamma_spin.blockSignals(False)
-            # reg3 layout: [31:16] auto_reset_period_ms | [15:12] epoch_bit_select | [11:0] v2pi_counts
+            # reg3 contains auto-reset period (high 16) and v2pi counts (low 16)
             reg3 = int(spgd_d.get("3", 0))
-            v2pi   = reg3 & 0x0FFF
-            epoch  = (reg3 >> 12) & 0x0F
+            v2pi = reg3 & 0x0FFF
             period = (reg3 >> 16) & 0xFFFF
 
             self.spgd_auto_reset_cb.blockSignals(True)
@@ -552,10 +522,6 @@ class MasterTab(QWidget):
             # update voltage label (12-bit scale -> 4096 = 4V)
             v_voltage = (v2pi / 4096.0) * 4.0
             self.spgd_v2pi_voltage_label.setText(f"{v_voltage:.3f} V")
-
-            self.spgd_epoch_spin.blockSignals(True)
-            self.spgd_epoch_spin.setValue(epoch)
-            self.spgd_epoch_spin.blockSignals(False)
             
         # Update ADC Overview
         adc_texts = []
@@ -1712,36 +1678,32 @@ class TelemetryTab(QWidget):
         controls.addStretch()
         layout.addLayout(controls)
         
-        self.figure = Figure(figsize=(8, 9))
+        self.figure = Figure(figsize=(8, 6))
         self.canvas = FigureCanvas(self.figure)
         layout.addWidget(self.canvas)
-
-        self.ax_j   = self.figure.add_subplot(311)
-        self.ax_dj  = self.figure.add_subplot(312)
-        self.ax_dac = self.figure.add_subplot(313)
-        self.figure.tight_layout(pad=2.0)
+        
+        self.ax_j = self.figure.add_subplot(211)
+        self.ax_dac = self.figure.add_subplot(212)
+        self.figure.tight_layout()
         
     def capture_and_plot(self):
         if not self.client.connected:
             QMessageBox.warning(self, "Disconnected", "Not connected to Zynq server.")
             return
             
-        FIFO_ADDR = 0x43C00000  # Update to match your Vivado block design address
-
-        # RDFO at AXI-Lite offset 0xA4 -> reg 41; reports number of 256-bit packets (PG080)
-        occupancy_resp = self.client.send_command({"cmd": "read", "addr": FIFO_ADDR, "reg": 41})
+        FIFO_ADDR = 0x43C00000
+        
+        occupancy_resp = self.client.send_command({"cmd":"read", "addr": FIFO_ADDR, "reg": 8})
         if not occupancy_resp or occupancy_resp.get("status") != "ok":
             QMessageBox.warning(self, "Error", "Could not read FIFO occupancy.")
             return
-
+            
         occupancy = occupancy_resp.get("value", 0)
         if occupancy == 0:
             QMessageBox.information(self, "Empty", "No telemetry data available in FIFO.")
             return
-
-        # RDFD at AXI-Lite offset 0xA8 -> reg 42; each 256-bit packet = 8 x 32-bit reads
-        word_count = occupancy * 8
-        data = self.client.read_fifo(FIFO_ADDR, 42, word_count)
+            
+        data = self.client.read_fifo(FIFO_ADDR, 9, occupancy)
         if not data:
             QMessageBox.warning(self, "Error", "Failed to read data from FIFO.")
             return
@@ -1749,25 +1711,13 @@ class TelemetryTab(QWidget):
         # Parse 256-bit packets (8 x 32-bit words per packet)
         num_packets = len(data) // 8
         if num_packets == 0:
-            QMessageBox.warning(self, "Error", f"Got {len(data)} words — not enough for a full 256-bit packet (need 8).")
+            QMessageBox.warning(self, "Error", "Not enough data for a full packet.")
             return
-
-
-        j_plus  = []
+            
+        j_plus = []
         j_minus = []
-        delta_j = []
         dacs = [[] for _ in range(8)]
-
-        # 256-bit packet word map (32-bit words, little-endian LSB first):
-        #   w0 [31:0]   = dac0[15:0]  | dac1[15:0]
-        #   w1 [63:32]  = dac2[15:0]  | dac3[15:0]
-        #   w2 [95:64]  = dac4[15:0]  | dac5[15:0]
-        #   w3 [127:96] = dac6[15:0]  | dac7[15:0]
-        #   w4 [159:128]= j_plus[15:0]| j_minus[15:0]
-        #   w5 [191:160]= delta_j[15:0]| scaled_update[15:0]
-        #   w6 [223:192]= epoch[15:0] | {7'd0, delta_j[16], row[2:0], 5'd0}
-        #                              ^^ bit 24 of w6 = delta_j MSB
-        #   w7 [255:224]= 39'd0 reserved
+        
         for i in range(num_packets):
             idx = i * 8
             w0 = data[idx]
@@ -1775,10 +1725,8 @@ class TelemetryTab(QWidget):
             w2 = data[idx+2]
             w3 = data[idx+3]
             w4 = data[idx+4]
-            w5 = data[idx+5]
-            w6 = data[idx+6]
-
-            # DAC baseline phases (unsigned 16-bit)
+            
+            # DACs
             dacs[0].append(w0 & 0xFFFF)
             dacs[1].append((w0 >> 16) & 0xFFFF)
             dacs[2].append(w1 & 0xFFFF)
@@ -1787,50 +1735,35 @@ class TelemetryTab(QWidget):
             dacs[5].append((w2 >> 16) & 0xFFFF)
             dacs[6].append(w3 & 0xFFFF)
             dacs[7].append((w3 >> 16) & 0xFFFF)
-
-            # J+ and J- are sign-extended 16-bit ADC readings (never exceed 16-bit range)
+            
+            # J values (16-bit signed)
             jp = w4 & 0xFFFF
             jm = (w4 >> 16) & 0xFFFF
             if jp >= 0x8000: jp -= 0x10000
             if jm >= 0x8000: jm -= 0x10000
+            
             j_plus.append(jp)
             j_minus.append(jm)
-
-            # delta_j is 17-bit signed: low 16 bits in w5[15:0], MSB (bit 16) in w6 bit 24.
-            # Reconstruct and sign-extend from 17 bits to avoid aliasing for |dj| > 32767.
-            dj_low  = w5 & 0xFFFF
-            dj_msb  = (w6 >> 24) & 0x1          # bit 216 of packet = bit 24 of word 6
-            dj_raw  = (dj_msb << 16) | dj_low   # reassemble 17-bit unsigned
-            if dj_raw >= (1 << 16):              # if bit 16 set, value is negative
-                dj_raw -= (1 << 17)              # two's-complement sign extension
-            delta_j.append(dj_raw)
             
         self.ax_j.clear()
-        self.ax_j.plot(j_plus,  label='J+', color='royalblue')
-        self.ax_j.plot(j_minus, label='J-', color='tomato', alpha=0.7)
+        self.ax_j.plot(j_plus, label='J+')
+        self.ax_j.plot(j_minus, label='J-', alpha=0.7)
         self.ax_j.set_title("Performance Metric (J) Convergence")
         self.ax_j.set_ylabel("ADC Counts")
         self.ax_j.legend()
         self.ax_j.grid(True)
-
-        self.ax_dj.clear()
-        self.ax_dj.plot(delta_j, label='ΔJ (17-bit, correct)', color='mediumseagreen')
-        self.ax_dj.axhline(0, color='gray', linewidth=0.8, linestyle='--')
-        self.ax_dj.set_title("Gradient Signal (ΔJ = J+ − J−)")
-        self.ax_dj.set_ylabel("ADC Counts")
-        self.ax_dj.legend()
-        self.ax_dj.grid(True)
-
+        
         self.ax_dac.clear()
         for i in range(8):
             self.ax_dac.plot(dacs[i], label=f'Ch {i}')
-        self.ax_dac.set_title("DAC Phase Trajectories (Unperturbed u_reg)")
+        self.ax_dac.set_title("DAC Phase Trajectories")
         self.ax_dac.set_xlabel("Iteration")
         self.ax_dac.set_ylabel("DAC Value (0-65535)")
+        # Put legend outside if too many
         self.ax_dac.legend(loc='upper right', bbox_to_anchor=(1.15, 1.0))
         self.ax_dac.grid(True)
-
-        self.figure.tight_layout(pad=2.0)
+        
+        self.figure.tight_layout()
         self.canvas.draw()
 
 
