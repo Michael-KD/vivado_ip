@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QLabel, QSpinBox, QDoubleSpinBox, QPushButton, QCheckBox,
     QComboBox, QProgressBar, QGroupBox, QLineEdit, QMessageBox,
-    QSlider
+    QSlider, QFrame
 )
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QFont
@@ -397,13 +397,13 @@ class MasterTab(QWidget):
             QMessageBox.warning(self, "Disconnected", "Not connected to Zynq server.")
             return
 
-        # RDFO: Receive Data FIFO Occupancy — AXI-Lite offset 0xA4 = reg 41 (PG080 Table 3-6).
+        # RDFO: Receive Data FIFO Occupancy — AXI-Lite offset 0x1C = reg 7 (PG080 Table 3-6).
         # With axis_dwidth_converter (256→32) upstream, the FIFO stores 32-bit words,
         # so RDFO reports the total number of 32-bit words (8 per 256-bit packet).
-        occupancy_resp = self.client.send_command({"cmd": "read", "addr": FIFO_ADDR, "reg": 41})
+        occupancy_resp = self.client.send_command({"cmd": "read", "addr": FIFO_ADDR, "reg": 7})
         if not occupancy_resp or occupancy_resp.get("status") != "ok":
-            QMessageBox.warning(self, "FIFO Error", "Could not read FIFO occupancy (reg 41). "
-                                "Check that the FIFO is mapped at 0x43C00000.")
+            QMessageBox.warning(self, "FIFO Error", "Could not read FIFO occupancy (reg 7). "
+                                f"Check that the FIFO is mapped at 0x{FIFO_ADDR:08X}.")
             return
 
         occupancy = occupancy_resp.get("value", 0)
@@ -411,12 +411,18 @@ class MasterTab(QWidget):
             QMessageBox.information(self, "FIFO Empty", "No telemetry data available in FIFO.")
             return
 
-        # RDFD: Receive Data FIFO Data — AXI-Lite offset 0xA8 = reg 42.
+        # RDFD: Receive Data FIFO Data — AXI-Lite offset 0x20 = reg 8.
         # Read all 32-bit words; each group of 8 words is one 256-bit telemetry packet.
-        data = self.client.read_fifo(FIFO_ADDR, 42, occupancy)
+        data = self.client.read_fifo(FIFO_ADDR, 8, occupancy)
         if not data:
             QMessageBox.warning(self, "FIFO Error", "Failed to read data from FIFO.")
             return
+            
+        # RLR: Receive Length Register — AXI-Lite offset 0x24 = reg 9.
+        # Must be read to acknowledge the packets.
+        num_packets = occupancy // 8
+        for _ in range(num_packets):
+            self.client.send_command({"cmd": "read", "addr": FIFO_ADDR, "reg": 9})
 
         # Save raw 32-bit words to CSV — 8 consecutive words = 1 packet.
         import csv
@@ -1655,7 +1661,6 @@ class CalibrationTab(QWidget):
                 self.stop_test()
             elif wrap_detected:
                 self.stop_test()
-        test_layout.addWidget(QFrame(), 4, 0, 1, 3)
 
 # =============================================================================
 # Telemetry Tab
@@ -1692,9 +1697,7 @@ class TelemetryTab(QWidget):
             QMessageBox.warning(self, "Disconnected", "Not connected to Zynq server.")
             return
             
-        FIFO_ADDR = 0x43C00000
-        
-        occupancy_resp = self.client.send_command({"cmd":"read", "addr": FIFO_ADDR, "reg": 8})
+        occupancy_resp = self.client.send_command({"cmd":"read", "addr": FIFO_ADDR, "reg": 7})
         if not occupancy_resp or occupancy_resp.get("status") != "ok":
             QMessageBox.warning(self, "Error", "Could not read FIFO occupancy.")
             return
@@ -1704,7 +1707,7 @@ class TelemetryTab(QWidget):
             QMessageBox.information(self, "Empty", "No telemetry data available in FIFO.")
             return
             
-        data = self.client.read_fifo(FIFO_ADDR, 9, occupancy)
+        data = self.client.read_fifo(FIFO_ADDR, 8, occupancy)
         if not data:
             QMessageBox.warning(self, "Error", "Failed to read data from FIFO.")
             return
@@ -1714,6 +1717,10 @@ class TelemetryTab(QWidget):
         if num_packets == 0:
             QMessageBox.warning(self, "Error", "Not enough data for a full packet.")
             return
+            
+        # Acknowledge packets by reading RLR (reg 9)
+        for _ in range(num_packets):
+            self.client.send_command({"cmd": "read", "addr": FIFO_ADDR, "reg": 9})
             
         j_plus = []
         j_minus = []
