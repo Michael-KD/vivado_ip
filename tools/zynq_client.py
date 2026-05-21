@@ -114,6 +114,10 @@ DAC_ADDRS = [0x80100000, 0x80110000, 0x80120000, 0x80130000, 0x80140000, 0x80150
 # 1 SPGD
 SPGD_ADDR = 0x80000000
 
+# Address of the axi_fifo_mm_s IP — update if Vivado assigns a different address.
+FIFO_ADDR = 0x80200000
+
+
 # =============================================================================
 # Network Client
 # =============================================================================
@@ -392,9 +396,6 @@ class MasterTab(QWidget):
         if not self.client.connected:
             QMessageBox.warning(self, "Disconnected", "Not connected to Zynq server.")
             return
-
-        # Address of the axi_fifo_mm_s IP — update if Vivado assigns a different address.
-        FIFO_ADDR = 0x43C00000
 
         # RDFO: Receive Data FIFO Occupancy — AXI-Lite offset 0xA4 = reg 41 (PG080 Table 3-6).
         # With axis_dwidth_converter (256→32) upstream, the FIFO stores 32-bit words,

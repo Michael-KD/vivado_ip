@@ -44,7 +44,7 @@
 #define DEFAULT_PORT 5000
 #define MAX_MSG_LEN  65536 // Increased buffer length to handle read_all arrays
 
-#define SERVER_VERSION "2.0"
+#define SERVER_VERSION "3.0"
 
 // ============================================================================
 // Global State
