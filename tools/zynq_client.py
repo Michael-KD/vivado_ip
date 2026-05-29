@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QFont
 
-VERSION = "3.0"
+VERSION = "3.2"
 
 
 def _reg_to_int(value: Any) -> int:
@@ -253,26 +253,32 @@ class MasterTab(QWidget):
 
         self.spgd_settle_spin = QSpinBox()
         self.spgd_settle_spin.setRange(0, 65535)
-        self.spgd_settle_spin.valueChanged.connect(self.on_spgd_params)
+        self.spgd_settle_spin.valueChanged.connect(self.on_spgd_settle_changed)
         self.spgd_settle_spin.setToolTip("Settle wait in SPGD FSM clock cycles for both +du and -du measurements.")
+        self.spgd_settle_time_label = QLabel("0.00 us")
+
         self.spgd_perturb_spin = QSpinBox()
-        self.spgd_perturb_spin.setRange(0, 65535)
+        self.spgd_perturb_spin.setRange(0, 4095)
         self.spgd_perturb_spin.valueChanged.connect(self.on_spgd_params)
         self.spgd_perturb_spin.setToolTip("Perturbation magnitude du in DAC counts applied per channel.")
+
         self.spgd_gamma_spin = QSpinBox()
         self.spgd_gamma_spin.setRange(0, 2147483647)
         self.spgd_gamma_spin.valueChanged.connect(self.on_spgd_gamma)
         self.spgd_gamma_spin.setToolTip("Learning rate gamma register. Datapath uses fixed-point scaling (product bits [31:16]).")
         
-        settle_label = QLabel("Settle:")
-        settle_label.setToolTip("Settling delay after each perturbation, in SPGD clock cycles.")
+        settle_label = QLabel("Settle (0-65535 cycles):")
+        settle_label.setToolTip("Settling delay after each perturbation, in 100MHz clock cycles.")
         spgd_layout.addWidget(settle_label, 1, 0)
         spgd_layout.addWidget(self.spgd_settle_spin, 1, 1)
-        perturb_label = QLabel("Perturb:")
+        spgd_layout.addWidget(self.spgd_settle_time_label, 1, 2)
+
+        perturb_label = QLabel("Perturb (0-4095 DAC counts):")
         perturb_label.setToolTip("Unsigned perturbation amplitude du, in DAC counts.")
         spgd_layout.addWidget(perturb_label, 2, 0)
         spgd_layout.addWidget(self.spgd_perturb_spin, 2, 1)
-        gamma_label = QLabel("Gamma:")
+
+        gamma_label = QLabel("Gamma (0-2147483647 fixed-point):")
         gamma_label.setToolTip("Signed learning-rate parameter used in update term gamma * deltaJ.")
         spgd_layout.addWidget(gamma_label, 3, 0)
         spgd_layout.addWidget(self.spgd_gamma_spin, 3, 1)
@@ -379,6 +385,14 @@ class MasterTab(QWidget):
             self.client.write_reg(self.spgd_addr, 0, ctrl)
             self.spgd_ctrl = ctrl
 
+    def on_spgd_settle_changed(self, value):
+        time_us = value / 100.0
+        if time_us < 1000:
+            self.spgd_settle_time_label.setText(f"{time_us:.2f} µs")
+        else:
+            self.spgd_settle_time_label.setText(f"{time_us / 1000.0:.2f} ms")
+        self.on_spgd_params(value)
+
     def on_spgd_params(self, _):
         if self.client.connected:
             config = (self.spgd_perturb_spin.value() << 16) | self.spgd_settle_spin.value()
@@ -421,23 +435,52 @@ class MasterTab(QWidget):
         # RLR: Receive Length Register — AXI-Lite offset 0x24 = reg 9.
         # Must be read to acknowledge the packets.
         num_packets = occupancy // 8
-        for _ in range(num_packets):
-            self.client.send_command({"cmd": "read", "addr": FIFO_ADDR, "reg": 9})
+        if num_packets > 0:
+            self.client.read_fifo(FIFO_ADDR, 9, num_packets)
 
-        # Save raw 32-bit words to CSV — 8 consecutive words = 1 packet.
+        # Save decoded telemetry packets to CSV
         import csv
         import time
         filename = f"spgd_telemetry_{int(time.time())}.csv"
         try:
             with open(filename, 'w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow(["WordIndex", "PacketIndex", "WordInPacket", "RawValue"])
-                for i, val in enumerate(data):
-                    writer.writerow([i, i // 8, i % 8, val])
-            num_packets = occupancy // 8
+                writer.writerow(["Packet", "Epoch", "Hadamard_Row", "DAC0", "DAC1", "DAC2", "DAC3", "DAC4", "DAC5", "DAC6", "DAC7", "J+", "J-", "Delta_J", "Scaled_Update"])
+                
+                for i in range(num_packets):
+                    idx = i * 8
+                    w0, w1, w2, w3, w4, w5, w6, w7 = data[idx:idx+8]
+                    
+                    dac0 = w0 & 0xFFFF
+                    dac1 = (w0 >> 16) & 0xFFFF
+                    dac2 = w1 & 0xFFFF
+                    dac3 = (w1 >> 16) & 0xFFFF
+                    dac4 = w2 & 0xFFFF
+                    dac5 = (w2 >> 16) & 0xFFFF
+                    dac6 = w3 & 0xFFFF
+                    dac7 = (w3 >> 16) & 0xFFFF
+                    
+                    jp = w4 & 0xFFFF
+                    jm = (w4 >> 16) & 0xFFFF
+                    if jp >= 0x8000: jp -= 0x10000
+                    if jm >= 0x8000: jm -= 0x10000
+                    
+                    delta_j_low = w5 & 0xFFFF
+                    scaled_update = (w5 >> 16) & 0xFFFF
+                    if scaled_update >= 0x8000: scaled_update -= 0x10000
+                    
+                    epoch = w6 & 0xFFFF
+                    row = (w6 >> 16) & 0xFF
+                    delta_j_msb = (w6 >> 24) & 0x01
+                    
+                    delta_j = delta_j_low | (delta_j_msb << 16)
+                    if delta_j >= 0x10000: delta_j -= 0x20000
+                    
+                    writer.writerow([i, epoch, row, dac0, dac1, dac2, dac3, dac4, dac5, dac6, dac7, jp, jm, delta_j, scaled_update])
+
             QMessageBox.information(
                 self, "Capture Success",
-                f"Captured {num_packets} packets ({occupancy} 32-bit words).\nSaved to {filename}"
+                f"Captured {num_packets} packets.\nSaved decoded telemetry to {filename}"
             )
         except Exception as e:
             QMessageBox.warning(self, "Save Error", f"Failed to save CSV: {e}")
@@ -500,7 +543,13 @@ class MasterTab(QWidget):
             self.spgd_passthrough_cb.blockSignals(False)
             
             self.spgd_settle_spin.blockSignals(True)
-            self.spgd_settle_spin.setValue(config & 0xFFFF)
+            val = config & 0xFFFF
+            self.spgd_settle_spin.setValue(val)
+            time_us = val / 100.0
+            if time_us < 1000:
+                self.spgd_settle_time_label.setText(f"{time_us:.2f} µs")
+            else:
+                self.spgd_settle_time_label.setText(f"{time_us / 1000.0:.2f} ms")
             self.spgd_settle_spin.blockSignals(False)
             
             self.spgd_perturb_spin.blockSignals(True)
@@ -984,6 +1033,9 @@ class DACTab(QWidget):
         self.single_mode_widgets = [self.output_group, control_group, raw_group]
         self.all_group.setVisible(False)
         layout.addStretch()
+        
+        # Default to 'Show all DACs' mode
+        self.show_all_cb.setChecked(True)
 
     def on_view_mode_changed(self, state):
         show_all = bool(state)
@@ -1681,6 +1733,19 @@ class TelemetryTab(QWidget):
         self.capture_btn.clicked.connect(self.capture_and_plot)
         self.capture_btn.setToolTip("Pulls all data from the AXI-Stream FIFO and graphs it.")
         controls.addWidget(self.capture_btn)
+
+        self.run_duration_spin = QSpinBox()
+        self.run_duration_spin.setRange(1, 10000)
+        self.run_duration_spin.setValue(1000)
+        self.run_duration_spin.setToolTip("Duration in milliseconds to run SPGD.")
+        controls.addWidget(QLabel("Run Duration (ms):"))
+        controls.addWidget(self.run_duration_spin)
+
+        self.run_auto_btn = QPushButton("Run Automated Test")
+        self.run_auto_btn.clicked.connect(self.run_automated_test)
+        self.run_auto_btn.setToolTip("Resets DACs, runs SPGD for the specified duration, then plots.")
+        controls.addWidget(self.run_auto_btn)
+
         controls.addStretch()
         layout.addLayout(controls)
         
@@ -1691,6 +1756,59 @@ class TelemetryTab(QWidget):
         self.ax_j = self.figure.add_subplot(211)
         self.ax_dac = self.figure.add_subplot(212)
         self.figure.tight_layout()
+        
+    def flush_fifo(self):
+        occupancy_resp = self.client.send_command({"cmd":"read", "addr": FIFO_ADDR, "reg": 7})
+        if occupancy_resp and occupancy_resp.get("status") == "ok":
+            occupancy = occupancy_resp.get("value", 0)
+            if occupancy > 0:
+                self.client.read_fifo(FIFO_ADDR, 8, occupancy)
+                num_packets = occupancy // 8
+                if num_packets > 0:
+                    self.client.read_fifo(FIFO_ADDR, 9, num_packets)
+
+    def run_automated_test(self):
+        if not self.client.connected:
+            QMessageBox.warning(self, "Disconnected", "Not connected to Zynq server.")
+            return
+
+        # 1. Stop SPGD
+        ctrl_resp = self.client.send_command({"cmd": "read", "addr": SPGD_ADDR, "reg": 0})
+        ctrl = ctrl_resp.get("value", 0) if (ctrl_resp and ctrl_resp.get("status") == "ok") else 0
+        ctrl &= ~0x01 # clear enable_loop
+        self.client.write_reg(SPGD_ADDR, 0, ctrl)
+
+        # 2. Flush FIFO
+        self.flush_fifo()
+
+        # 3. Reset DACs (Pulse soft_reset)
+        self.client.pulse_bit(SPGD_ADDR, 2)
+
+        # 4. Start SPGD
+        ctrl |= 0x01
+        self.client.write_reg(SPGD_ADDR, 0, ctrl)
+
+        # 5. Wait
+        duration_ms = self.run_duration_spin.value()
+        self.run_auto_btn.setEnabled(False)
+        self.capture_btn.setEnabled(False)
+        QTimer.singleShot(duration_ms, self.finish_automated_test)
+
+    def finish_automated_test(self):
+        self.run_auto_btn.setEnabled(True)
+        self.capture_btn.setEnabled(True)
+        if not self.client.connected:
+            return
+            
+        # 1. Stop SPGD
+        ctrl_resp = self.client.send_command({"cmd": "read", "addr": SPGD_ADDR, "reg": 0})
+        if ctrl_resp and ctrl_resp.get("status") == "ok":
+            ctrl = ctrl_resp.get("value", 0)
+            ctrl &= ~0x01
+            self.client.write_reg(SPGD_ADDR, 0, ctrl)
+
+        # 2. Capture and Plot
+        self.capture_and_plot()
         
     def capture_and_plot(self):
         if not self.client.connected:
@@ -1719,8 +1837,8 @@ class TelemetryTab(QWidget):
             return
             
         # Acknowledge packets by reading RLR (reg 9)
-        for _ in range(num_packets):
-            self.client.send_command({"cmd": "read", "addr": FIFO_ADDR, "reg": 9})
+        if num_packets > 0:
+            self.client.read_fifo(FIFO_ADDR, 9, num_packets)
             
         j_plus = []
         j_minus = []
