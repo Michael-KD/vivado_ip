@@ -144,18 +144,29 @@ module spgd_datapath #(
                                 ($signed({2'b00, u_reg[i]}) - $signed(scaled_update));
 
             logic [DAC_WIDTH-1:0] next_u;
+
             always_comb begin
-                // Underflow clamp (less than 0)
-                if (temp_next_u < 0) begin
-                    next_u = '0; 
-                // Overflow clamp (greater than max DAC value, e.g., 0xFFFF)
-                end else if (temp_next_u > {2'b00, {DAC_WIDTH{1'b1}}}) begin
-                    next_u = '1; // Sets all bits to 1
-                // Safe range
+                if (v2pi_counts != 0) begin
+                    // Wrapping mode
+                    if (temp_next_u < 0) begin
+                        next_u = temp_next_u[DAC_WIDTH-1:0] + v2pi_ext;
+                    end else if (temp_next_u >= {2'b00, v2pi_ext}) begin
+                        next_u = temp_next_u[DAC_WIDTH-1:0] - v2pi_ext;
+                    end else begin
+                        next_u = temp_next_u[DAC_WIDTH-1:0];
+                    end
                 end else begin
-                    next_u = temp_next_u[DAC_WIDTH-1:0];
+                    // Clamping mode
+                    if (temp_next_u < 0) begin
+                        next_u = '0; 
+                    end else if (temp_next_u > {2'b00, {DAC_WIDTH{1'b1}}}) begin
+                        next_u = '1; // Sets all bits to 1
+                    end else begin
+                        next_u = temp_next_u[DAC_WIDTH-1:0];
+                    end
                 end
             end
+
             // 4. Commit the new baseline phase to the register
             always_ff @(posedge clk or negedge rst_n) begin
                 if (!rst_n) begin
@@ -163,13 +174,7 @@ module spgd_datapath #(
                 end else if (soft_reset) begin
                     u_reg[i] <= {1'b1, {(DAC_WIDTH-1){1'b0}}}; // Reset to mid-scale
                 end else if (commit_new_u) begin
-                    // Apply v2pi phase wrap if enabled (v2pi_counts != 0).
-                    // v2pi_ext is a module-scope combinational wire (declared before the generate
-                    // block) to avoid local variable declarations and blocking assignments inside
-                    // always_ff, which are not reliably supported by Vivado synthesis.
-                    u_reg[i] <= (v2pi_counts != 0 && next_u >= v2pi_ext)
-                                ? (next_u - v2pi_ext)
-                                : next_u;
+                    u_reg[i] <= next_u;
                 end
             end
             
