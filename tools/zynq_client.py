@@ -451,14 +451,15 @@ class MasterTab(QWidget):
                     idx = i * 8
                     w0, w1, w2, w3, w4, w5, w6, w7 = data[idx:idx+8]
                     
-                    dac0 = w0 & 0xFFFF
-                    dac1 = (w0 >> 16) & 0xFFFF
-                    dac2 = w1 & 0xFFFF
-                    dac3 = (w1 >> 16) & 0xFFFF
-                    dac4 = w2 & 0xFFFF
-                    dac5 = (w2 >> 16) & 0xFFFF
-                    dac6 = w3 & 0xFFFF
-                    dac7 = (w3 >> 16) & 0xFFFF
+                    # Hardware packs 8 channels of 12-bit DACs into 96 bits (w0, w1, w2)
+                    dac0 = w0 & 0xFFF
+                    dac1 = (w0 >> 12) & 0xFFF
+                    dac2 = ((w0 >> 24) & 0xFF) | ((w1 & 0xF) << 8)
+                    dac3 = (w1 >> 4) & 0xFFF
+                    dac4 = (w1 >> 16) & 0xFFF
+                    dac5 = ((w1 >> 28) & 0xF) | ((w2 & 0xFF) << 4)
+                    dac6 = (w2 >> 8) & 0xFFF
+                    dac7 = (w2 >> 20) & 0xFFF
                     
                     jp = w4 & 0xFFFF
                     jm = (w4 >> 16) & 0xFFFF
@@ -1723,6 +1724,12 @@ class TelemetryTab(QWidget):
     def __init__(self, client: ZynqClient):
         super().__init__()
         self.client = client
+        import collections
+        self.j_plus = collections.deque(maxlen=2000)
+        self.j_minus = collections.deque(maxlen=2000)
+        self.dacs = [collections.deque(maxlen=2000) for _ in range(8)]
+        self.live_timer = QTimer()
+        self.live_timer.timeout.connect(self.poll_fifo)
         self.init_ui()
         
     def init_ui(self):
@@ -1733,6 +1740,11 @@ class TelemetryTab(QWidget):
         self.capture_btn.clicked.connect(self.capture_and_plot)
         self.capture_btn.setToolTip("Pulls all data from the AXI-Stream FIFO and graphs it.")
         controls.addWidget(self.capture_btn)
+        
+        self.live_cb = QCheckBox("Live Plot")
+        self.live_cb.stateChanged.connect(self.on_live_toggled)
+        self.live_cb.setToolTip("Continuously poll and plot telemetry data in real-time.")
+        controls.addWidget(self.live_cb)
 
         self.run_duration_spin = QSpinBox()
         self.run_duration_spin.setRange(1, 10000)
@@ -1810,6 +1822,37 @@ class TelemetryTab(QWidget):
         # 2. Capture and Plot
         self.capture_and_plot()
         
+    def on_live_toggled(self, state):
+        if state:
+            self.live_timer.start(100) # Poll every 100ms
+        else:
+            self.live_timer.stop()
+
+    def poll_fifo(self):
+        if not self.client.connected:
+            return
+            
+        occupancy_resp = self.client.send_command({"cmd":"read", "addr": FIFO_ADDR, "reg": 7})
+        if not occupancy_resp or occupancy_resp.get("status") != "ok":
+            return
+            
+        occupancy = occupancy_resp.get("value", 0)
+        if occupancy == 0:
+            return
+            
+        data = self.client.read_fifo(FIFO_ADDR, 8, occupancy)
+        if not data:
+            return
+            
+        num_packets = len(data) // 8
+        if num_packets == 0:
+            return
+            
+        if num_packets > 0:
+            self.client.read_fifo(FIFO_ADDR, 9, num_packets)
+            
+        self._append_and_plot(data, num_packets)
+
     def capture_and_plot(self):
         if not self.client.connected:
             QMessageBox.warning(self, "Disconnected", "Not connected to Zynq server.")
@@ -1830,37 +1873,39 @@ class TelemetryTab(QWidget):
             QMessageBox.warning(self, "Error", "Failed to read data from FIFO.")
             return
             
-        # Parse 256-bit packets (8 x 32-bit words per packet)
         num_packets = len(data) // 8
         if num_packets == 0:
             QMessageBox.warning(self, "Error", "Not enough data for a full packet.")
             return
             
-        # Acknowledge packets by reading RLR (reg 9)
         if num_packets > 0:
             self.client.read_fifo(FIFO_ADDR, 9, num_packets)
             
-        j_plus = []
-        j_minus = []
-        dacs = [[] for _ in range(8)]
-        
+        # Clear buffers for a manual one-off capture
+        self.j_plus.clear()
+        self.j_minus.clear()
+        for d in self.dacs:
+            d.clear()
+            
+        self._append_and_plot(data, num_packets)
+
+    def _append_and_plot(self, data, num_packets):
         for i in range(num_packets):
             idx = i * 8
             w0 = data[idx]
             w1 = data[idx+1]
             w2 = data[idx+2]
-            w3 = data[idx+3]
             w4 = data[idx+4]
             
-            # DACs
-            dacs[0].append(w0 & 0xFFFF)
-            dacs[1].append((w0 >> 16) & 0xFFFF)
-            dacs[2].append(w1 & 0xFFFF)
-            dacs[3].append((w1 >> 16) & 0xFFFF)
-            dacs[4].append(w2 & 0xFFFF)
-            dacs[5].append((w2 >> 16) & 0xFFFF)
-            dacs[6].append(w3 & 0xFFFF)
-            dacs[7].append((w3 >> 16) & 0xFFFF)
+            # Hardware packs 8 channels of 12-bit DACs into 96 bits (w0, w1, w2)
+            self.dacs[0].append(w0 & 0xFFF)
+            self.dacs[1].append((w0 >> 12) & 0xFFF)
+            self.dacs[2].append(((w0 >> 24) & 0xFF) | ((w1 & 0xF) << 8))
+            self.dacs[3].append((w1 >> 4) & 0xFFF)
+            self.dacs[4].append((w1 >> 16) & 0xFFF)
+            self.dacs[5].append(((w1 >> 28) & 0xF) | ((w2 & 0xFF) << 4))
+            self.dacs[6].append((w2 >> 8) & 0xFFF)
+            self.dacs[7].append((w2 >> 20) & 0xFFF)
             
             # J values (16-bit signed)
             jp = w4 & 0xFFFF
@@ -1868,12 +1913,12 @@ class TelemetryTab(QWidget):
             if jp >= 0x8000: jp -= 0x10000
             if jm >= 0x8000: jm -= 0x10000
             
-            j_plus.append(jp)
-            j_minus.append(jm)
+            self.j_plus.append(jp)
+            self.j_minus.append(jm)
             
         self.ax_j.clear()
-        self.ax_j.plot(j_plus, label='J+')
-        self.ax_j.plot(j_minus, label='J-', alpha=0.7)
+        self.ax_j.plot(self.j_plus, label='J+')
+        self.ax_j.plot(self.j_minus, label='J-', alpha=0.7)
         self.ax_j.set_title("Performance Metric (J) Convergence")
         self.ax_j.set_ylabel("ADC Counts")
         self.ax_j.legend()
@@ -1881,11 +1926,10 @@ class TelemetryTab(QWidget):
         
         self.ax_dac.clear()
         for i in range(8):
-            self.ax_dac.plot(dacs[i], label=f'Ch {i}')
+            self.ax_dac.plot(self.dacs[i], label=f'Ch {i}')
         self.ax_dac.set_title("DAC Phase Trajectories")
         self.ax_dac.set_xlabel("Iteration")
-        self.ax_dac.set_ylabel("DAC Value (0-65535)")
-        # Put legend outside if too many
+        self.ax_dac.set_ylabel("DAC Value (0-4095)")
         self.ax_dac.legend(loc='upper right', bbox_to_anchor=(1.15, 1.0))
         self.ax_dac.grid(True)
         
