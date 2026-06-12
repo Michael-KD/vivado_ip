@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QFont
 
-VERSION = "3.2"
+VERSION = "3.3"
 
 
 def _reg_to_int(value: Any) -> int:
@@ -298,6 +298,11 @@ class MasterTab(QWidget):
         self.spgd_auto_reset_cb.stateChanged.connect(self.on_spgd_auto_reset)
         self.spgd_auto_reset_cb.setToolTip("Enable hardware automatic periodic soft reset (bit 3)")
         spgd_layout.addWidget(self.spgd_auto_reset_cb, 5, 0)
+        
+        self.clear_fifo_btn = QPushButton("Clear FIFO")
+        self.clear_fifo_btn.clicked.connect(self.on_clear_fifo)
+        self.clear_fifo_btn.setToolTip("Flushes all unread telemetry packets from the FIFO.")
+        spgd_layout.addWidget(self.clear_fifo_btn, 4, 2)
 
         self.spgd_period_spin = QSpinBox()
         self.spgd_period_spin.setRange(0, 65535)
@@ -406,6 +411,24 @@ class MasterTab(QWidget):
         if self.client.connected:
             self.client.pulse_bit(self.spgd_addr, 2)
 
+    def flush_fifo(self):
+        occupancy_resp = self.client.send_command({"cmd":"read", "addr": FIFO_ADDR, "reg": 7})
+        if occupancy_resp and occupancy_resp.get("status") == "ok":
+            occupancy = occupancy_resp.get("value", 0)
+            words_to_read = (occupancy // 8) * 8
+            if words_to_read > 0:
+                self.client.read_fifo(FIFO_ADDR, 8, words_to_read)
+                num_packets = words_to_read // 8
+                self.client.read_fifo(FIFO_ADDR, 9, num_packets)
+
+    def on_clear_fifo(self):
+        if not self.client.connected:
+            QMessageBox.warning(self, "Disconnected", "Not connected to Zynq server.")
+            return
+            
+        self.flush_fifo()
+        QMessageBox.information(self, "FIFO Cleared", "All unread telemetry data has been flushed from the hardware FIFO.")
+
     def on_capture_telemetry(self):
         if not self.client.connected:
             QMessageBox.warning(self, "Disconnected", "Not connected to Zynq server.")
@@ -460,10 +483,10 @@ class MasterTab(QWidget):
                     dac5 = ((w1 >> 28) & 0xF) | ((w2 & 0xFF) << 4)
                     dac6 = (w2 >> 8) & 0xFFF
                     dac7 = (w2 >> 20) & 0xFFF
-                    
+
                     jp = w4 & 0xFFFF
-                    jm = (w4 >> 16) & 0xFFFF
                     if jp >= 0x8000: jp -= 0x10000
+                    jm = (w4 >> 16) & 0xFFFF
                     if jm >= 0x8000: jm -= 0x10000
                     
                     delta_j_low = w5 & 0xFFFF
@@ -1762,22 +1785,40 @@ class TelemetryTab(QWidget):
         layout.addLayout(controls)
         
         self.figure = Figure(figsize=(8, 6))
-        self.canvas = FigureCanvas(self.figure)
-        layout.addWidget(self.canvas)
-        
-        self.ax_j = self.figure.add_subplot(211)
-        self.ax_dac = self.figure.add_subplot(212)
         self.figure.tight_layout()
-        
+
     def flush_fifo(self):
         occupancy_resp = self.client.send_command({"cmd":"read", "addr": FIFO_ADDR, "reg": 7})
         if occupancy_resp and occupancy_resp.get("status") == "ok":
             occupancy = occupancy_resp.get("value", 0)
-            if occupancy > 0:
-                self.client.read_fifo(FIFO_ADDR, 8, occupancy)
-                num_packets = occupancy // 8
-                if num_packets > 0:
-                    self.client.read_fifo(FIFO_ADDR, 9, num_packets)
+            words_to_read = (occupancy // 8) * 8
+            if words_to_read > 0:
+                self.client.read_fifo(FIFO_ADDR, 8, words_to_read)
+                num_packets = words_to_read // 8
+                self.client.read_fifo(FIFO_ADDR, 9, num_packets)
+
+    def on_capture_telemetry(self):
+        if not self.client.connected or not self.logging_active:
+            return
+
+        occupancy_resp = self.client.send_command({"cmd":"read", "addr": FIFO_ADDR, "reg": 7})
+        if not occupancy_resp or occupancy_resp.get("status") != "ok":
+            return
+
+        occupancy = occupancy_resp.get("value", 0)
+        
+        # MUST only pop complete 8-word packets to prevent AXI stream misalignment!
+        num_packets = occupancy // 8
+        words_to_read = num_packets * 8
+        
+        if words_to_read == 0:
+            return
+            
+        # Read the raw data
+        data = self.client.read_fifo(FIFO_ADDR, 8, words_to_read)
+        
+        # Pop packets from FIFO lengths
+        self.client.read_fifo(FIFO_ADDR, 9, num_packets)
 
     def run_automated_test(self):
         if not self.client.connected:
@@ -1795,32 +1836,135 @@ class TelemetryTab(QWidget):
 
         # 3. Reset DACs (Pulse soft_reset)
         self.client.pulse_bit(SPGD_ADDR, 2)
-
+        
         # 4. Start SPGD
         ctrl |= 0x01
         self.client.write_reg(SPGD_ADDR, 0, ctrl)
 
-        # 5. Wait
+        # 5. Continuously Poll FIFO for duration
         duration_ms = self.run_duration_spin.value()
         self.run_auto_btn.setEnabled(False)
         self.capture_btn.setEnabled(False)
-        QTimer.singleShot(duration_ms, self.finish_automated_test)
-
-    def finish_automated_test(self):
+        
+        import time
+        start_time = time.time()
+        all_data = []
+        
+        while (time.time() - start_time) * 1000 < duration_ms:
+            occupancy_resp = self.client.send_command({"cmd":"read", "addr": FIFO_ADDR, "reg": 7})
+            if occupancy_resp and occupancy_resp.get("status") == "ok":
+                occupancy = occupancy_resp.get("value", 0)
+                if occupancy > 0:
+                    chunk = self.client.read_fifo(FIFO_ADDR, 8, occupancy)
+                    if chunk:
+                        all_data.extend(chunk)
+                        num_packets = len(chunk) // 8
+                        if num_packets > 0:
+                            self.client.read_fifo(FIFO_ADDR, 9, num_packets)
+            QApplication.processEvents() # Keep GUI un-frozen
+            time.sleep(0.01) # Yield slightly
+            
+        # 6. Stop SPGD
+        ctrl &= ~0x01
+        self.client.write_reg(SPGD_ADDR, 0, ctrl)
+        
+        # 7. Final Drain
+        occupancy_resp = self.client.send_command({"cmd":"read", "addr": FIFO_ADDR, "reg": 7})
+        if occupancy_resp and occupancy_resp.get("status") == "ok":
+            occupancy = occupancy_resp.get("value", 0)
+            if occupancy > 0:
+                chunk = self.client.read_fifo(FIFO_ADDR, 8, occupancy)
+                if chunk:
+                    all_data.extend(chunk)
+                    num_packets = len(chunk) // 8
+                    if num_packets > 0:
+                        self.client.read_fifo(FIFO_ADDR, 9, num_packets)
+        
         self.run_auto_btn.setEnabled(True)
         self.capture_btn.setEnabled(True)
-        if not self.client.connected:
+        
+        # 8. Decode, Write CSV, and Plot
+        num_packets = len(all_data) // 8
+        if num_packets == 0:
+            QMessageBox.information(self, "Empty", "No telemetry data captured.")
             return
             
-        # 1. Stop SPGD
-        ctrl_resp = self.client.send_command({"cmd": "read", "addr": SPGD_ADDR, "reg": 0})
-        if ctrl_resp and ctrl_resp.get("status") == "ok":
-            ctrl = ctrl_resp.get("value", 0)
-            ctrl &= ~0x01
-            self.client.write_reg(SPGD_ADDR, 0, ctrl)
+        import csv
+        filename = f"spgd_telemetry_{int(time.time())}.csv"
+        try:
+            with open(filename, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(["Packet", "Epoch", "Hadamard_Row", "DAC0", "DAC1", "DAC2", "DAC3", "DAC4", "DAC5", "DAC6", "DAC7", "J+", "J-", "Delta_J", "Scaled_Update"])
+                
+                # Clear plot buffers
+                self.j_plus.clear()
+                self.j_minus.clear()
+                for d in self.dacs:
+                    d.clear()
+                
+                for i in range(num_packets):
+                    idx = i * 8
+                    w0, w1, w2, w3, w4, w5, w6, w7 = all_data[idx:idx+8]
+                    
+                    dac0 = w0 & 0xFFF
+                    dac1 = (w0 >> 12) & 0xFFF
+                    dac2 = ((w0 >> 24) & 0xFF) | ((w1 & 0xF) << 8)
+                    dac3 = (w1 >> 4) & 0xFFF
+                    dac4 = (w1 >> 16) & 0xFFF
+                    dac5 = ((w1 >> 28) & 0xF) | ((w2 & 0xFF) << 4)
+                    dac6 = (w2 >> 8) & 0xFFF
+                    dac7 = (w2 >> 20) & 0xFFF
+                    
+                    jp = w4 & 0xFFFF
+                    jm = (w4 >> 16) & 0xFFFF
+                    
+                    delta_j_low = w5 & 0xFFFF
+                    scaled_update = (w5 >> 16) & 0xFFFF
+                    if scaled_update >= 0x8000: scaled_update -= 0x10000
+                    
+                    epoch = w6 & 0xFFFF
+                    row = (w6 >> 16) & 0xFF
+                    delta_j_msb = w7 & 0x01
+                    
+                    delta_j = delta_j_low | (delta_j_msb << 16)
+                    if delta_j >= 0x10000: delta_j -= 0x20000
+                    
+                    writer.writerow([i, epoch, row, dac0, dac1, dac2, dac3, dac4, dac5, dac6, dac7, jp, jm, delta_j, scaled_update])
+                    
+                    # Store in plot buffers
+                    self.dacs[0].append(dac0)
+                    self.dacs[1].append(dac1)
+                    self.dacs[2].append(dac2)
+                    self.dacs[3].append(dac3)
+                    self.dacs[4].append(dac4)
+                    self.dacs[5].append(dac5)
+                    self.dacs[6].append(dac6)
+                    self.dacs[7].append(dac7)
+                    self.j_plus.append(jp)
+                    self.j_minus.append(jm)
+                    
+            print(f"Saved {num_packets} packets to {filename}")
+        except Exception as e:
+            print(f"Error saving CSV: {e}")
 
-        # 2. Capture and Plot
-        self.capture_and_plot()
+        # Plot the massive dataset
+        self.ax_j.clear()
+        self.ax_dac.clear()
+        
+        t = range(num_packets)
+        self.ax_j.plot(t, self.j_plus, label='J+')
+        self.ax_j.plot(t, self.j_minus, label='J-')
+        self.ax_j.set_title("Photodiode Readings (J+, J-)")
+        self.ax_j.legend()
+        
+        show_all = self.show_all_checkbox.isChecked()
+        for i, d in enumerate(self.dacs):
+            if show_all or i == 0:
+                self.ax_dac.plot(t, d, label=f'DAC{i}')
+        self.ax_dac.set_title("DAC Updates")
+        self.ax_dac.legend()
+        
+        self.canvas.draw()
         
     def on_live_toggled(self, state):
         if state:

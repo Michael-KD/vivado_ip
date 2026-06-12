@@ -6,7 +6,7 @@
 		// Users to add parameters here
 		parameter integer NUM_CHANNELS = 8,
 		parameter integer ADC_WIDTH    = 16,
-		parameter integer DAC_WIDTH    = 16,
+		parameter integer DAC_WIDTH    = 12,
 		// User parameters ends
 		// Do not modify the parameters beyond this line
 

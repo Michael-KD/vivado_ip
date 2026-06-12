@@ -59,6 +59,19 @@ def verify_csv(filename):
         if scaled_update == 0:
             continue # If step is 0, DACs won't move. Can't deduce dither signs.
             
+        # Check if the packets are contiguous. If the hardware FIFO overflowed, 
+        # packets might be dropped, so nxt["DAC"] would include multiple updates!
+        nxt_h_row = int(nxt["Hadamard_Row"])
+        nxt_epoch = int(nxt["Epoch"])
+        curr_epoch = int(curr["Epoch"])
+        
+        expected_nxt_row = (h_row + 1) % 8
+        expected_nxt_epoch = curr_epoch + 1 if expected_nxt_row == 0 else curr_epoch
+        
+        if nxt_h_row != expected_nxt_row or nxt_epoch != expected_nxt_epoch:
+            # Non-contiguous packets, cannot verify step size for this pair
+            continue
+            
         expected_rom = HADAMARD_ROM[h_row % 8]
         actual_signs = []
         
@@ -69,7 +82,7 @@ def verify_csv(filename):
             diff = dac_nxt - dac_curr
             
             # Catch phase wrapping (V2PI jumps) which artificially makes diff huge
-            if abs(diff) > 20000:
+            if abs(diff) > 1000:
                 actual_signs.append(None) # Skip this channel's sign check
                 continue
                 
@@ -81,9 +94,10 @@ def verify_csv(filename):
             else: actual_signs.append(0) # DAC didn't move or step size was extremely small
             
             # Verify magnitude matches
-            if abs(diff) != abs(scaled_update):
-                # Exclude boundary clamping (0 or 65535)
-                if dac_nxt not in (0, 65535) and dac_curr not in (0, 65535):
+            # Allow off-by-one or off-by-two mismatches due to rounding/truncation differences between Hardware and Python
+            if abs(abs(diff) - abs(scaled_update)) > 2:
+                # Exclude boundary clamping (0 or 4095 for 12-bit DACs)
+                if dac_nxt not in (0, 4095) and dac_curr not in (0, 4095):
                     print(f"Row {i} (Packet {packet}): DAC{ch} step size mismatch! Expected move of {abs(scaled_update)}, but DAC moved from {dac_curr} to {dac_nxt} (diff: {diff})")
                     errors += 1
                     
@@ -102,6 +116,15 @@ def verify_csv(filename):
                 errors += 1
                 
     print("-" * 50)
+    
+    # Check if algorithm was stalled
+    all_zero = all(int(r["Scaled_Update"]) == 0 for r in rows[:-1])
+    if all_zero:
+        print("WARNING: All scaled_update values were identically 0! The algorithm is stalled.")
+        print("This usually means gamma_lr is too small or J+ and J- differ by too little.")
+        print("Check GUI parameter 'gamma_lr'.")
+        errors += 1
+        
     if errors == 0:
         print(f"SUCCESS: Verification passed! All {len(rows)-1} hardware update cycles match mathematically.")
     else:
